@@ -1,0 +1,14 @@
+.*
+*.db
+*.sh
+*.md
+*.csv
+*.zip
+*.exe
+*.log
+*.lock
+*.yaml
+*.bat
+docker
+__debug_bin
+Dockerfile

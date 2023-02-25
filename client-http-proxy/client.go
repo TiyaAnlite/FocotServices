@@ -3,10 +3,13 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/levigross/grequests"
 	"github.com/nats-io/nats.go"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/klog/v2"
 	"net/http"
 	"time"
@@ -101,41 +104,61 @@ func PackResponse(response *grequests.Response, request *Request) ([]byte, error
 }
 
 func requestHandle(msg *nats.Msg) {
+	ctx, tracer := cfg.worker.Start(cfg.worker.Ctx, "request-handle")
 	request := NewRequest()
 	if err := json.Unmarshal(msg.Data, request); err != nil {
 		klog.Errorf("Cannot parse proxy request: %s", err.Error())
+		tracer.RecordError(err)
+		tracer.End()
 	} else {
-		go doRequest(request, msg)
+		go doRequest(ctx, tracer, request, msg)
 	}
 }
 
-func doRequest(request *Request, msg *nats.Msg) {
+func doRequest(ctx context.Context, tracer trace.Span, request *Request, msg *nats.Msg) {
 	cfg.worker.Add(1)
 	defer cfg.worker.Done()
-	ro := &grequests.RequestOptions{
-		Params:  request.Params,
-		Data:    request.Data,
-		JSON:    request.JSON,
-		Context: cfg.worker.ctx,
-	}
+	defer tracer.End()
+	ro := request.BuildRequestOptions()
 	url := fmt.Sprintf("%s://%s%s", request.Protocol, request.Host, request.Path)
 	klog.Infof("%s %s", request.Method, url)
+
+	_, reqTrace := cfg.worker.Start(ctx, "do-request")
+	defer reqTrace.End()
+	reqTrace.SetAttributes(attribute.String("http.request.method", request.Method), attribute.String("http.request.url", url))
 	rate := time.Now().UnixMilli()
 	resp, err := grequests.Req(request.Method, url, ro)
 	klog.Infof("%s %s - %d - %dms", request.Method, url, resp.StatusCode, time.Now().UnixMilli()-rate)
 	if err != nil {
 		klog.Errorf("Error at create request: %s", err.Error())
+		reqTrace.RecordError(err)
+		reqStr, _ := json.Marshal(request)
+		reqTrace.SetAttributes(attribute.String("http.request", string(reqStr))) // Dump fll request
 		return
 	}
+	reqTrace.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 	if resp.Error != nil {
-		klog.Errorf("Error at parse response: %s", err.Error())
+		klog.Errorf("Error at do request: %s", err.Error())
+		reqTrace.RecordError(err)
 		return
 	}
+	reqTrace.End()
+
+	_, packTrace := cfg.worker.Start(ctx, "response-pack")
+	defer packTrace.End()
 	respData, err := PackResponse(resp, request)
-	if err == nil {
-		if err := msg.Respond(respData); err != nil {
-			klog.Errorf("Error at respond msg: %s", err.Error())
-			return
-		}
+	if err != nil {
+		packTrace.RecordError(err)
+		packTrace.SetAttributes(attribute.String("http.response.content", resp.String()))
+		return
+	}
+	packTrace.End()
+
+	_, respTrace := cfg.worker.Start(ctx, "nats-respond")
+	defer respTrace.End()
+	if err := msg.Respond(respData); err != nil {
+		klog.Errorf("Error at respond msg: %s", err.Error())
+		respTrace.RecordError(err)
+		return
 	}
 }

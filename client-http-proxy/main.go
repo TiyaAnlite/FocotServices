@@ -5,7 +5,9 @@ import (
 	"flag"
 	"github.com/TiyaAnlite/FocotServicesCommon/envx"
 	"github.com/TiyaAnlite/FocotServicesCommon/natsx"
+	"github.com/TiyaAnlite/FocotServicesCommon/tracex"
 	"github.com/TiyaAnlite/FocotServicesCommon/utils"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/klog/v2"
 	"strings"
 	"sync"
@@ -21,45 +23,64 @@ type config struct {
 }
 
 type worker struct {
-	ctx context.Context
+	Ctx context.Context
 	*sync.WaitGroup
+	trace.Tracer
 }
 
 var (
-	cfg = &config{}
-	mq  *natsx.NatsHelper
+	cfg         = &config{}
+	mq          *natsx.NatsHelper
+	traceHelper = &tracex.ServiceTraceHelper{}
 )
 
 func init() {
 	testing.Init()
 	flag.Parse()
 	envx.MustLoadEnv(cfg)
+	traceHelper.SetupTrace()
 }
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	cfg.worker = &worker{
-		ctx:       ctx,
+		Ctx:       ctx,
 		WaitGroup: &sync.WaitGroup{},
+		Tracer:    traceHelper.NewTracer(),
 	}
+	defer traceHelper.Shutdown(context.Background()) // Exit all 2
 
+	initCtx, initTracer := cfg.worker.Start(ctx, "Init")
+	defer initTracer.End()
+
+	_, t1 := cfg.worker.Start(initCtx, "Connect NATS")
+	defer t1.End()
 	mq = &natsx.NatsHelper{}
 	if err := mq.Open(cfg.NatsConfig); err != nil {
-		klog.Fatal("Cannot connect to NATS: %s", err.Error())
+		t1.RecordError(err)
+		klog.Errorf("Cannot connect to NATS: %s", err.Error())
+		return
 	}
+	defer mq.Close() // Exit all 1
 
 	if err := mq.AddNatsHandler(strings.Join([]string{cfg.ServiceId, "groups", "request"}, "."), requestHandle); err != nil {
-		klog.Fatal(err.Error())
-	}
-	if err := mq.AddNatsHandler(strings.Join([]string{cfg.ServiceId, cfg.NodeId, "request"}, "."), requestHandle); err != nil {
-		klog.Fatal(err.Error())
+		t1.RecordError(err)
+		klog.Errorf(err.Error())
+		return
 	}
 
+	if err := mq.AddNatsHandler(strings.Join([]string{cfg.ServiceId, cfg.NodeId, "request"}, "."), requestHandle); err != nil {
+		t1.RecordError(err)
+		klog.Errorf(err.Error())
+		return
+	}
+	t1.End()
+
+	initTracer.End()
 	klog.Infof("[%s]ready to accept requests, node id: %s", cfg.ServiceId, cfg.NodeId)
 
 	utils.Wait4CtrlC()
 	klog.Infof("stopping...")
-	mq.Close()
 	cancel()
 	cfg.worker.Wait()
 	klog.Info("done")
