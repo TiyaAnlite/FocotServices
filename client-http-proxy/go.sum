@@ -33,9 +33,11 @@ cloud.google.com/go/storage v1.10.0/go.mod h1:FLPqc6j+Ki4BU591ie1oL6qBQGu2Bl/tZ9
 dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7gZCb22OMCxBHrMx7a5I7Hp++hsVxbQ4BYO7hU=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
+github.com/GUAIK-ORG/go-snowflake v0.0.0-20200116064823-220c4260e85f h1:RDkg3pyE1qGbBpRWmvSN9RNZC5nUrOaEPiEpEb8y2f0=
+github.com/GUAIK-ORG/go-snowflake v0.0.0-20200116064823-220c4260e85f/go.mod h1:zA7AF9RTfpluCfz0omI4t5KCMaWHUMicsZoMccnaT44=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
-github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20230225121049-e37ed719e6cc h1:hb/vYSx+1QJbfvQRF4QaUypucOr76sZd3N4YpnQOdpg=
-github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20230225121049-e37ed719e6cc/go.mod h1:7ZLo++cemSieLt76wu77qo1Jicw/GT78Pe5FqyWc//c=
+github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20230226144707-aadecf42209b h1:J6gtMj9D6Vy3mOn+5B/f0B/MXP4C2UOF7kalS3aCXoQ=
+github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20230226144707-aadecf42209b/go.mod h1:7ZLo++cemSieLt76wu77qo1Jicw/GT78Pe5FqyWc//c=
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
 github.com/caarlos0/env/v6 v6.10.1 h1:t1mPSxNpei6M5yAeu1qtRdPAK29Nbcf/n3G7x+b3/II=
 github.com/caarlos0/env/v6 v6.10.1/go.mod h1:hvp/ryKXKipEkcuYjs9mI4bBCg+UI0Yhgm5Zu0ddvwc=

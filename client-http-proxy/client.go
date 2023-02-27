@@ -12,19 +12,34 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/klog/v2"
 	"net/http"
+	"strings"
 	"time"
 )
 
 type ProxyPackedResponse struct {
-	Ok      bool   `json:"ok"`
-	Payload []byte `json:"payload"`
-	Gzip    bool   `json:"gzip"`
+	Ok      bool   `json:"ok,omitempty"`
+	Payload []byte `json:"payload,omitempty"`
+	Gzip    bool   `json:"gzip,omitempty"`
 }
 
 type ProxyResponse struct {
-	StatusCode int         `json:"status_code"`
-	Data       []byte      `json:"data"`
-	Header     http.Header `json:"header"`
+	StatusCode int         `json:"status_code,omitempty"`
+	Data       []byte      `json:"data,omitempty"`
+	Header     http.Header `json:"header,omitempty"`
+}
+
+const (
+	TASK_ON_PROCESS = iota
+	TASK_SCHEDULED
+	TASK_FINISHED
+	TASK_FAILED
+)
+
+type taskStatus int
+
+type RequestProcessMsg struct {
+	Status    taskStatus `json:"status"`
+	RequestId string     `json:"request_id"`
 }
 
 // PrepareUnPackedResponse 返回包数据预处理
@@ -60,7 +75,7 @@ func PackResponse(response *grequests.Response, request *Request) ([]byte, error
 		StatusCode: response.StatusCode,
 		Data:       response.Bytes(),
 	}
-	if request.Headers {
+	if request.ResponseHeaders {
 		proxyResp.Header = response.Header
 	}
 	payload, err := json.Marshal(proxyResp)
@@ -111,40 +126,100 @@ func requestHandle(msg *nats.Msg) {
 		tracer.RecordError(err)
 		tracer.End()
 	} else {
-		go doRequest(ctx, tracer, request, msg)
+		tracer.SetAttributes(attribute.String("http.request.request_id", request.RequestId))
+		if err := updateTaskStatus(TASK_ON_PROCESS, request.RequestId); err != nil {
+			tracer.RecordError(err)
+			tracer.End()
+			return
+		}
+		_, limitTrace := cfg.worker.Start(ctx, "wait-schedule")
+		limitTrace.SetAttributes(attribute.Int("schedule.rate_limit_ms", cfg.RateLimitMs))
+		scheduler.AddTask(func() {
+			doRequest(ctx, tracer, limitTrace, request, msg)
+		})
 	}
 }
 
-func doRequest(ctx context.Context, tracer trace.Span, request *Request, msg *nats.Msg) {
+// waitingRequest request chan waiter
+func waitingRequest(requestFunc func() (*grequests.Response, error), respChan chan<- *grequests.Response, errChan chan<- error) {
+	resp, err := requestFunc()
+	if err != nil {
+		errChan <- err
+	} else {
+		respChan <- resp
+	}
+}
+
+func updateTaskStatus(newStatus taskStatus, requestId string) error {
+	if err := mq.PublishJson(strings.Join([]string{cfg.ServiceId, "task", requestId}, "."), &RequestProcessMsg{newStatus, requestId}); err != nil {
+		klog.ErrorfDepth(1, "Failed update task status: %s", err.Error())
+		return err
+	}
+	return nil
+}
+
+func doRequest(ctx context.Context, tracer trace.Span, limitTracer trace.Span, request *Request, msg *nats.Msg) {
+	if err := updateTaskStatus(TASK_SCHEDULED, request.RequestId); err != nil {
+		limitTracer.RecordError(err)
+		limitTracer.End()
+		return
+	}
+	limitTracer.End()
 	cfg.worker.Add(1)
 	defer cfg.worker.Done()
 	defer tracer.End()
+
 	ro := request.BuildRequestOptions()
+	ro.Context = ctx
 	url := fmt.Sprintf("%s://%s%s", request.Protocol, request.Host, request.Path)
 	klog.Infof("%s %s", request.Method, url)
 
 	_, reqTrace := cfg.worker.Start(ctx, "do-request")
 	defer reqTrace.End()
-	reqTrace.SetAttributes(attribute.String("http.request.method", request.Method), attribute.String("http.request.url", url))
+	reqTrace.SetAttributes(attribute.String("http.request.host", request.Host), attribute.String("http.request.method", request.Method), attribute.String("http.request.url", url))
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	respChan := make(chan *grequests.Response, 1)
+	errChan := make(chan error, 1)
 	rate := time.Now().UnixMilli()
-	resp, err := grequests.Req(request.Method, url, ro)
+	waitingRequest(func() (*grequests.Response, error) {
+		return grequests.Req(request.Method, url, ro)
+	}, respChan, errChan)
+	var resp *grequests.Response
+	for {
+		select {
+		case resp = <-respChan:
+			if resp.Error != nil {
+				klog.Errorf("Error at do request: %s", resp.Error.Error())
+				reqTrace.RecordError(resp.Error)
+				msg.Nak()
+				if err := updateTaskStatus(TASK_FAILED, request.RequestId); err != nil {
+					reqTrace.RecordError(err)
+				}
+				return
+			}
+			goto ProcessResp
+		case err := <-errChan:
+			klog.Errorf("Error at create request: %s", err.Error())
+			reqTrace.RecordError(err)
+			reqStr, _ := json.Marshal(request)
+			reqTrace.SetAttributes(attribute.String("http.request.raw", string(reqStr))) // Dump full request
+			if err := updateTaskStatus(TASK_FAILED, request.RequestId); err != nil {
+				reqTrace.RecordError(err)
+			}
+			msg.Term()
+			return
+		case <-ticker.C:
+			msg.InProgress()
+		}
+	}
+ProcessResp:
 	klog.Infof("%s %s - %d - %dms", request.Method, url, resp.StatusCode, time.Now().UnixMilli()-rate)
-	if err != nil {
-		klog.Errorf("Error at create request: %s", err.Error())
-		reqTrace.RecordError(err)
-		reqStr, _ := json.Marshal(request)
-		reqTrace.SetAttributes(attribute.String("http.request", string(reqStr))) // Dump fll request
-		return
-	}
 	reqTrace.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
-	if resp.Error != nil {
-		klog.Errorf("Error at do request: %s", err.Error())
-		reqTrace.RecordError(err)
-		return
-	}
+
 	reqTrace.End()
 
-	_, packTrace := cfg.worker.Start(ctx, "response-pack")
+	_, packTrace := cfg.worker.Start(ctx, "response-compress")
 	defer packTrace.End()
 	respData, err := PackResponse(resp, request)
 	if err != nil {
@@ -159,6 +234,12 @@ func doRequest(ctx context.Context, tracer trace.Span, request *Request, msg *na
 	if err := msg.Respond(respData); err != nil {
 		klog.Errorf("Error at respond msg: %s", err.Error())
 		respTrace.RecordError(err)
+		if err := updateTaskStatus(TASK_FAILED, request.RequestId); err != nil {
+			respTrace.RecordError(err)
+		}
 		return
+	}
+	if err := updateTaskStatus(TASK_FINISHED, request.RequestId); err != nil {
+		respTrace.RecordError(err)
 	}
 }

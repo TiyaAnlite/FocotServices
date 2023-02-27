@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"github.com/GUAIK-ORG/go-snowflake/snowflake"
 	"github.com/TiyaAnlite/FocotServicesCommon/envx"
 	"github.com/TiyaAnlite/FocotServicesCommon/natsx"
 	"github.com/TiyaAnlite/FocotServicesCommon/tracex"
@@ -12,13 +13,16 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type config struct {
 	natsx.NatsConfig
-	ServiceId     string `json:"service_id" yaml:"service_id" env:"SERVICE_ID" envDefault:"http-proxy"`
-	NodeId        string `json:"node_id" yaml:"node_id" env:"NODE_ID,required"`
-	GzipMinLength int    `json:"gzip_min_length" yaml:"gzip_min_length" env:"GZIP_MIN_LENGTH" envDefault:"1024"`
+	ServiceId     string   `json:"service_id" yaml:"service_id" env:"SERVICE_ID" envDefault:"http-proxy"`
+	NodeId        string   `json:"node_id" yaml:"node_id" env:"NODE_ID,required"`
+	NodeGroups    []string `json:"node_group" yaml:"node_group" env:"NODE_GROUPS,required"`
+	RateLimitMs   int      `json:"rate_limit_ms" yaml:"rate_limit_ms" env:"RATE_LIMIT_MS,required"`
+	GzipMinLength int      `json:"gzip_min_length" yaml:"gzip_min_length" env:"GZIP_MIN_LENGTH" envDefault:"1024"`
 	worker        *worker
 }
 
@@ -32,6 +36,8 @@ var (
 	cfg         = &config{}
 	mq          *natsx.NatsHelper
 	traceHelper = &tracex.ServiceTraceHelper{}
+	snowFlake   *snowflake.Snowflake
+	scheduler   = &TaskScheduler{}
 )
 
 func init() {
@@ -39,6 +45,7 @@ func init() {
 	flag.Parse()
 	envx.MustLoadEnv(cfg)
 	traceHelper.SetupTrace()
+	snowFlake, _ = snowflake.NewSnowflake(int64(0), int64(0))
 }
 
 func main() {
@@ -61,12 +68,20 @@ func main() {
 		klog.Errorf("Cannot connect to NATS: %s", err.Error())
 		return
 	}
-	defer mq.Close() // Exit all 1
+	defer func() {
+		if !mq.Nc.IsClosed() {
+			mq.Close()
+		}
+	}() // Exit all 1
 
-	if err := mq.AddNatsHandler(strings.Join([]string{cfg.ServiceId, "groups", "request"}, "."), requestHandle); err != nil {
-		t1.RecordError(err)
-		klog.Errorf(err.Error())
-		return
+	for _, group := range cfg.NodeGroups {
+		groupSub, err := mq.Nc.QueueSubscribe(strings.Join([]string{cfg.ServiceId, "groups", group, "request"}, "."), group, requestHandle)
+		if err != nil {
+			t1.RecordError(err)
+			klog.Errorf(err.Error())
+			return
+		}
+		mq.AddSubscribe(groupSub)
 	}
 
 	if err := mq.AddNatsHandler(strings.Join([]string{cfg.ServiceId, cfg.NodeId, "request"}, "."), requestHandle); err != nil {
@@ -77,11 +92,17 @@ func main() {
 	t1.End()
 
 	initTracer.End()
-	klog.Infof("[%s]ready to accept requests, node id: %s", cfg.ServiceId, cfg.NodeId)
+	klog.Infof("[%s]ready to accept requests, node id: %s, groups: %s", cfg.ServiceId, cfg.NodeId, cfg.NodeGroups)
+	if cfg.RateLimitMs == 0 {
+		go scheduler.Start()
+	} else {
+		go scheduler.Start(time.Duration(int64(time.Millisecond) * int64(cfg.RateLimitMs)))
+	}
 
 	utils.Wait4CtrlC()
 	klog.Infof("stopping...")
 	cancel()
+	mq.Close() // Close nats first for wait scheduler
 	cfg.worker.Wait()
 	klog.Info("done")
 }
