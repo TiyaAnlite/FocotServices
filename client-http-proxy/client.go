@@ -28,6 +28,14 @@ type ProxyResponse struct {
 	Header     http.Header `json:"header,omitempty"`
 }
 
+type MetaResponse struct {
+	NodeId        string   `json:"node_id"`
+	Groups        []string `json:"groups"`
+	RateLimitMs   int      `json:"rate_limit_ms"`
+	GzipMinLength int      `json:"gzip_min_length"`
+	Uptime        int      `json:"uptime"`
+}
+
 const (
 	TASK_ON_PROCESS = iota
 	TASK_SCHEDULED
@@ -116,6 +124,23 @@ func PackResponse(response *grequests.Response, request *Request) ([]byte, error
 		return nil, err
 	}
 	return packetData, nil
+}
+
+func getMeta() *MetaResponse {
+	return &MetaResponse{
+		NodeId:        cfg.NodeId,
+		Groups:        cfg.NodeGroups,
+		RateLimitMs:   cfg.RateLimitMs,
+		GzipMinLength: cfg.GzipMinLength,
+		Uptime:        int(time.Now().Sub(cfg.uptime).Seconds()),
+	}
+}
+
+func metaHandle(msg *nats.Msg) {
+	data, _ := json.Marshal(getMeta())
+	if err := msg.Respond(data); err != nil {
+		klog.Errorf("On respond meta: %s", err.Error())
+	}
 }
 
 func requestHandle(msg *nats.Msg) {

@@ -24,6 +24,7 @@ type config struct {
 	RateLimitMs   int      `json:"rate_limit_ms" yaml:"rate_limit_ms" env:"RATE_LIMIT_MS,required"`
 	GzipMinLength int      `json:"gzip_min_length" yaml:"gzip_min_length" env:"GZIP_MIN_LENGTH" envDefault:"1024"`
 	worker        *worker
+	uptime        time.Time
 }
 
 type worker struct {
@@ -89,9 +90,23 @@ func main() {
 		klog.Errorf(err.Error())
 		return
 	}
+
+	if err := mq.AddNatsHandler(strings.Join([]string{cfg.ServiceId, cfg.NodeId, "meta"}, "."), metaHandle); err != nil {
+		t1.RecordError(err)
+		klog.Errorf(err.Error())
+		return
+	}
+
+	// Online hook
+	if err := eventHooks("online"); err != nil {
+		t1.RecordError(err)
+		klog.Errorf(err.Error())
+		return
+	}
 	t1.End()
 
 	initTracer.End()
+	cfg.uptime = time.Now()
 	klog.Infof("[%s]ready to accept requests, node id: %s, groups: %s", cfg.ServiceId, cfg.NodeId, cfg.NodeGroups)
 	if cfg.RateLimitMs == 0 {
 		go scheduler.Start()
@@ -102,7 +117,15 @@ func main() {
 	utils.Wait4CtrlC()
 	klog.Infof("stopping...")
 	cancel()
+	// Offline hook
+	if err := eventHooks("offline"); err != nil {
+		klog.Errorf("On offline hook: %s", err.Error())
+	}
 	mq.Close() // Close nats first for wait scheduler
 	cfg.worker.Wait()
 	klog.Info("done")
+}
+
+func eventHooks(subject string) error {
+	return mq.PublishJson(strings.Join([]string{cfg.ServiceId, subject}, "."), getMeta())
 }
