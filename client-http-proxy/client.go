@@ -29,11 +29,12 @@ type ProxyResponse struct {
 }
 
 type MetaResponse struct {
-	NodeId        string   `json:"node_id"`
-	Groups        []string `json:"groups"`
-	RateLimitMs   int      `json:"rate_limit_ms"`
-	GzipMinLength int      `json:"gzip_min_length"`
-	Uptime        int      `json:"uptime"`
+	NodeId            string   `json:"node_id"`
+	Groups            []string `json:"groups"`
+	RateLimitMs       int      `json:"rate_limit_ms"`
+	GzipMinLength     int      `json:"gzip_min_length"`
+	Uptime            int      `json:"uptime"`
+	HeartbeatInterval int      `json:"heartbeat_interval"`
 }
 
 const (
@@ -46,8 +47,9 @@ const (
 type taskStatus int
 
 type RequestProcessMsg struct {
-	Status    taskStatus `json:"status"`
-	RequestId string     `json:"request_id"`
+	Status    taskStatus    `json:"status"`
+	RequestId string        `json:"request_id"`
+	TraceId   trace.TraceID `json:"trace_id"`
 }
 
 // PrepareUnPackedResponse 返回包数据预处理
@@ -128,11 +130,31 @@ func PackResponse(response *grequests.Response, request *Request) ([]byte, error
 
 func getMeta() *MetaResponse {
 	return &MetaResponse{
-		NodeId:        cfg.NodeId,
-		Groups:        cfg.NodeGroups,
-		RateLimitMs:   cfg.RateLimitMs,
-		GzipMinLength: cfg.GzipMinLength,
-		Uptime:        int(time.Now().Sub(cfg.uptime).Seconds()),
+		NodeId:            cfg.NodeId,
+		Groups:            cfg.NodeGroups,
+		RateLimitMs:       cfg.RateLimitMs,
+		GzipMinLength:     cfg.GzipMinLength,
+		Uptime:            int(time.Now().Sub(cfg.uptime).Seconds()),
+		HeartbeatInterval: cfg.HeartbeatInterval,
+	}
+}
+
+func heartbeat() {
+	cfg.worker.Add(1)
+	defer cfg.worker.Done()
+	ticker := time.NewTicker(time.Duration(int64(time.Second) * int64(cfg.HeartbeatInterval)))
+	klog.Infof("Heartbeat alive")
+	for {
+		select {
+		case <-ticker.C:
+			if err := eventHooks("heartbeat"); err != nil {
+				klog.Errorf("On heartbeat: %s", err.Error())
+			}
+		case <-cfg.worker.Ctx.Done():
+			ticker.Stop()
+			klog.Info("Heartbeat end")
+			return
+		}
 	}
 }
 
@@ -152,7 +174,7 @@ func requestHandle(msg *nats.Msg) {
 		tracer.End()
 	} else {
 		tracer.SetAttributes(attribute.String("http.request.request_id", request.RequestId))
-		if err := updateTaskStatus(TASK_ON_PROCESS, request.RequestId); err != nil {
+		if err := updateTaskStatus(TASK_ON_PROCESS, request.RequestId, tracer.SpanContext().TraceID()); err != nil {
 			tracer.RecordError(err)
 			tracer.End()
 			return
@@ -175,8 +197,8 @@ func waitingRequest(requestFunc func() (*grequests.Response, error), respChan ch
 	}
 }
 
-func updateTaskStatus(newStatus taskStatus, requestId string) error {
-	if err := mq.PublishJson(strings.Join([]string{cfg.ServiceId, "task", requestId}, "."), &RequestProcessMsg{newStatus, requestId}); err != nil {
+func updateTaskStatus(newStatus taskStatus, requestId string, traceId trace.TraceID) error {
+	if err := mq.PublishJson(strings.Join([]string{cfg.ServiceId, "task", requestId}, "."), &RequestProcessMsg{newStatus, requestId, traceId}); err != nil {
 		klog.ErrorfDepth(1, "Failed update task status: %s", err.Error())
 		return err
 	}
@@ -184,7 +206,7 @@ func updateTaskStatus(newStatus taskStatus, requestId string) error {
 }
 
 func doRequest(ctx context.Context, tracer trace.Span, limitTracer trace.Span, request *Request, msg *nats.Msg) {
-	if err := updateTaskStatus(TASK_SCHEDULED, request.RequestId); err != nil {
+	if err := updateTaskStatus(TASK_SCHEDULED, request.RequestId, tracer.SpanContext().TraceID()); err != nil {
 		limitTracer.RecordError(err)
 		limitTracer.End()
 		return
@@ -218,7 +240,7 @@ func doRequest(ctx context.Context, tracer trace.Span, limitTracer trace.Span, r
 				klog.Errorf("Error at do request: %s", resp.Error.Error())
 				reqTrace.RecordError(resp.Error)
 				msg.Nak()
-				if err := updateTaskStatus(TASK_FAILED, request.RequestId); err != nil {
+				if err := updateTaskStatus(TASK_FAILED, request.RequestId, tracer.SpanContext().TraceID()); err != nil {
 					reqTrace.RecordError(err)
 				}
 				return
@@ -229,7 +251,7 @@ func doRequest(ctx context.Context, tracer trace.Span, limitTracer trace.Span, r
 			reqTrace.RecordError(err)
 			reqStr, _ := json.Marshal(request)
 			reqTrace.SetAttributes(attribute.String("http.request.raw", string(reqStr))) // Dump full request
-			if err := updateTaskStatus(TASK_FAILED, request.RequestId); err != nil {
+			if err := updateTaskStatus(TASK_FAILED, request.RequestId, tracer.SpanContext().TraceID()); err != nil {
 				reqTrace.RecordError(err)
 			}
 			msg.Term()
@@ -259,12 +281,12 @@ ProcessResp:
 	if err := msg.Respond(respData); err != nil {
 		klog.Errorf("Error at respond msg: %s", err.Error())
 		respTrace.RecordError(err)
-		if err := updateTaskStatus(TASK_FAILED, request.RequestId); err != nil {
+		if err := updateTaskStatus(TASK_FAILED, request.RequestId, tracer.SpanContext().TraceID()); err != nil {
 			respTrace.RecordError(err)
 		}
 		return
 	}
-	if err := updateTaskStatus(TASK_FINISHED, request.RequestId); err != nil {
+	if err := updateTaskStatus(TASK_FINISHED, request.RequestId, tracer.SpanContext().TraceID()); err != nil {
 		respTrace.RecordError(err)
 	}
 }

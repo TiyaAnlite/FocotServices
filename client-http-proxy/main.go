@@ -18,13 +18,14 @@ import (
 
 type config struct {
 	natsx.NatsConfig
-	ServiceId     string   `json:"service_id" yaml:"service_id" env:"SERVICE_ID" envDefault:"http-proxy"`
-	NodeId        string   `json:"node_id" yaml:"node_id" env:"NODE_ID,required"`
-	NodeGroups    []string `json:"node_group" yaml:"node_group" env:"NODE_GROUPS,required"`
-	RateLimitMs   int      `json:"rate_limit_ms" yaml:"rate_limit_ms" env:"RATE_LIMIT_MS,required"`
-	GzipMinLength int      `json:"gzip_min_length" yaml:"gzip_min_length" env:"GZIP_MIN_LENGTH" envDefault:"1024"`
-	worker        *worker
-	uptime        time.Time
+	ServiceId         string   `json:"service_id" yaml:"service_id" env:"SERVICE_ID" envDefault:"http-proxy"`
+	NodeId            string   `json:"node_id" yaml:"node_id" env:"NODE_ID,required"`
+	NodeGroups        []string `json:"node_group" yaml:"node_group" env:"NODE_GROUPS,required"`
+	RateLimitMs       int      `json:"rate_limit_ms" yaml:"rate_limit_ms" env:"RATE_LIMIT_MS,required"`
+	GzipMinLength     int      `json:"gzip_min_length" yaml:"gzip_min_length" env:"GZIP_MIN_LENGTH" envDefault:"1024"`
+	HeartbeatInterval int      `json:"heart_beat_interval" yaml:"heart_beat_interval" env:"HEARTBEAT_INTERVAL" envDefault:"30"`
+	worker            *worker
+	uptime            time.Time
 }
 
 type worker struct {
@@ -97,21 +98,22 @@ func main() {
 		return
 	}
 
-	// Online hook
-	if err := eventHooks("online"); err != nil {
-		t1.RecordError(err)
-		klog.Errorf(err.Error())
-		return
-	}
 	t1.End()
 
 	initTracer.End()
 	cfg.uptime = time.Now()
+	go heartbeat()
 	klog.Infof("[%s]ready to accept requests, node id: %s, groups: %s", cfg.ServiceId, cfg.NodeId, cfg.NodeGroups)
 	if cfg.RateLimitMs == 0 {
 		go scheduler.Start()
 	} else {
 		go scheduler.Start(time.Duration(int64(time.Millisecond) * int64(cfg.RateLimitMs)))
+	}
+	// Online hook
+	if err := eventHooks("online"); err != nil {
+		t1.RecordError(err)
+		klog.Errorf(err.Error())
+		return
 	}
 
 	utils.Wait4CtrlC()
@@ -127,5 +129,5 @@ func main() {
 }
 
 func eventHooks(subject string) error {
-	return mq.PublishJson(strings.Join([]string{cfg.ServiceId, subject}, "."), getMeta())
+	return mq.PublishJson(strings.Join([]string{cfg.ServiceId, "event", subject}, "."), getMeta())
 }
