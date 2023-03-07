@@ -10,7 +10,7 @@ WORKDIR /go/src/app
 COPY io-bilive-recorder ./io-bilive-recorder
 
 RUN go work init io-bilive-recorder
-RUN go build -o /go/bin/app github.com/TiyaAnlite/FocotServices/io-bilive-recorder
+RUN go build -tags timetzdata -o /go/bin/app github.com/TiyaAnlite/FocotServices/io-bilive-recorder
 
 FROM alpine
 

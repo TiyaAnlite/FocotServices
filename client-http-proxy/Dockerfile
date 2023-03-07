@@ -10,7 +10,7 @@ WORKDIR /go/src/app
 COPY client-http-proxy ./client-http-proxy
 
 RUN go work init client-http-proxy
-RUN go build -o /go/bin/app github.com/TiyaAnlite/FocotServices/client-http-proxy
+RUN go build -tags timetzdata -o /go/bin/app github.com/TiyaAnlite/FocotServices/client-http-proxy
 
 FROM alpine
 
