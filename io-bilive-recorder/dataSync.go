@@ -1,23 +1,31 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/levigross/grequests"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"k8s.io/klog/v2"
-	"sync"
 	"time"
 )
+
+type taskStatus struct {
+	Padding  bool
+	client   *grequests.Session
+	connWarn bool
+	counter  int
+	tracer   trace.Span
+	taskCtx  context.Context
+}
 
 type DataSyncer struct {
 	Recorders       map[string]string
 	RefreshInterval int
 	MaxRequestTime  int
 	StreamName      string
-	taskStatus      sync.Map // serverName:bool
-	clients         sync.Map // serverName:Session
-	connWarn        sync.Map // serverName:bool
+	taskStatus      map[string]*taskStatus
 	syncStarted     bool
 	wg              *worker
 }
@@ -32,29 +40,32 @@ func (syncer *DataSyncer) doSync(worker *worker) {
 	defer syncer.wg.Done()
 	klog.Infof("Starting sync")
 	// Init task status
+	syncer.taskStatus = make(map[string]*taskStatus, len(syncer.Recorders))
 	for serverName := range syncer.Recorders {
-		syncer.taskStatus.Store(serverName, false)
-		syncer.connWarn.Store(serverName, false)
+		syncer.taskStatus[serverName] = &taskStatus{
+			Padding:  false,
+			connWarn: false,
+			counter:  0,
+		}
 	}
 	ticker := time.NewTicker(time.Duration(int64(time.Second) * int64(syncer.RefreshInterval)))
 	for {
 		select {
 		case <-ticker.C:
-			syncer.taskStatus.Range(func(key, value any) bool {
-				if value.(bool) {
+			for serverName, status := range syncer.taskStatus {
+				if status.Padding {
 					// Task padding
-					return true
+					continue
 				} else {
-					serverName := key.(string)
 					url, ok := syncer.Recorders[serverName]
 					if !ok {
 						klog.Errorf("Unknown recorders: %s", serverName)
+						continue
 					}
 					// klog.Infof("Sync %s", serverName)
 					go syncer.doRequest(serverName, url)
 				}
-				return true
-			})
+			}
 		case <-syncer.wg.Ctx.Done():
 			ticker.Stop()
 			klog.Infof("Sync end.")
@@ -67,51 +78,62 @@ func (syncer *DataSyncer) doSync(worker *worker) {
 func (syncer *DataSyncer) doRequest(servername string, recorderUrl string) {
 	syncer.wg.Add(1)
 	defer syncer.wg.Done()
-	syncer.taskStatus.Store(servername, true)
-	defer syncer.taskStatus.Store(servername, false)
-	syncCtx, reqTrace := syncer.wg.Start(syncer.wg.Ctx, "doSyncRequest")
-	reqTrace.SetAttributes(attribute.String("bilive.servername", servername))
-	defer reqTrace.End()
-	client, ok := syncer.clients.Load(servername)
-	if !ok {
-		reqTrace.AddEvent("New client")
+	status := syncer.taskStatus[servername]
+	status.Padding = true
+	defer func() {
+		status.counter++
+		if status.counter >= 100 {
+			status.tracer.End()
+			status.taskCtx = nil
+			status.tracer = nil
+			status.counter = 0
+		}
+		status.Padding = false
+	}()
+	if status.tracer == nil {
+		// First trace
+		status.taskCtx, status.tracer = syncer.wg.Start(syncer.wg.Ctx, "doSyncRequestP100")
+		status.tracer.SetAttributes(attribute.String("bilive.servername", servername))
+	}
+	if status.client == nil {
+		status.tracer.AddEvent("New client")
 		klog.Infof("[%s]New http client", servername)
 		ro := &grequests.RequestOptions{
 			RequestTimeout: time.Duration(int64(time.Second) * int64(syncer.MaxRequestTime)),
 			DialKeepAlive:  time.Second * 30,
 			Context:        syncer.wg.Ctx,
 		}
-		client = grequests.NewSession(ro)
-		syncer.clients.Store(servername, client)
+		status.client = grequests.NewSession(ro)
 	}
-	_, apiTrace := syncer.wg.Start(syncCtx, "apiRequest")
+	_, apiTrace := syncer.wg.Start(status.taskCtx, "apiRequest")
 	apiTrace.SetAttributes(attribute.String("bilive.recorderUrl", recorderUrl))
 	defer apiTrace.End()
-	resp, err := client.(*grequests.Session).Get(fmt.Sprintf("http://%s/api/room", recorderUrl), nil)
+	resp, err := status.client.Get(fmt.Sprintf("http://%s/api/room", recorderUrl), nil)
 	if err != nil {
-		isWarned, _ := syncer.connWarn.Load(servername)
-		if !isWarned.(bool) {
+		if !status.connWarn {
 			apiTrace.RecordError(err)
 			klog.Errorf("[%s]On sync: %s", servername, err.Error())
-			syncer.connWarn.Store(servername, true)
+			status.connWarn = true
 		}
 		return
 	}
 	apiTrace.End()
+	_, parseTrace := syncer.wg.Start(status.taskCtx, "biliveRoomsParse")
+	defer parseTrace.End()
 	var rooms []BiliveRecorderRecord
 	if err := resp.JSON(&rooms); err != nil {
-		reqTrace.RecordError(err)
+		parseTrace.RecordError(err)
 		klog.Errorf("[%s]On parse rooms: %s", servername, err.Error())
 		return
 	}
-	isWarned, _ := syncer.connWarn.Load(servername)
-	if isWarned.(bool) {
-		reqTrace.AddEvent("Sync re-active")
+	parseTrace.End()
+	if status.connWarn {
+		status.tracer.AddEvent("Sync re-active")
 		klog.Infof("[%s]Sync re-active", servername)
-		syncer.connWarn.Store(servername, false)
+		status.connWarn = true
 	}
 	// Update stream
-	_, natsTrace := syncer.wg.Start(syncCtx, "updateJetStream")
+	_, natsTrace := syncer.wg.Start(status.taskCtx, "updateJetStream")
 	natsTrace.SetAttributes(attribute.Int("bilive.fetchRoom", len(rooms)))
 	defer natsTrace.End()
 	recordTime := time.Now()
