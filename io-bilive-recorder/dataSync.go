@@ -130,7 +130,7 @@ func (syncer *DataSyncer) doRequest(servername string, recorderUrl string) {
 	if status.connWarn {
 		status.tracer.AddEvent("Sync re-active")
 		klog.Infof("[%s]Sync re-active", servername)
-		status.connWarn = true
+		status.connWarn = false
 	}
 	// Update stream
 	_, natsTrace := syncer.wg.Start(status.taskCtx, "updateJetStream")
