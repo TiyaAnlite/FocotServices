@@ -145,7 +145,7 @@ func (syncer *DataSyncer) doRequest(servername string, recorderUrl string) {
 			// Report recording rooms only
 			continue
 		}
-		klog.Infof("room: %d", room.RoomID)
+		// klog.Infof("room: %d", room.RoomID)
 		room.RecordTime = recordTime
 		roomIdList = append(roomIdList, room.RoomID)
 		data, err := json.Marshal(&room)

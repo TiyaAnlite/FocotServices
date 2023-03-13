@@ -33,7 +33,7 @@ type BiliveRecorderStats struct {
 	FileMaxTimestamp       int     `json:"fileMaxTimestamp"`
 	AddedDuration          float64 `json:"addedDuration"`
 	PassedTime             float64 `json:"passedTime"`
-	DurationRatio          string  `json:"durationRatio"`
+	DurationRatio          any     `json:"durationRatio"` // NaN or float
 	InputVideoBytes        int     `json:"inputVideoBytes"`
 	InputAudioBytes        int     `json:"inputAudioBytes"`
 	OutputVideoFrames      int     `json:"outputVideoFrames"`
@@ -57,5 +57,5 @@ type BiliveRecorderIOStats struct {
 	NetworkMbps            float64   `json:"networkMbps"`
 	DiskWriteDuration      float64   `json:"diskWriteDuration"`
 	DiskBytesWritten       int       `json:"diskBytesWritten"`
-	DiskMBps               float64   `json:"diskMBps"`
+	DiskMBps               any       `json:"diskMBps"` // NaN or float
 }
