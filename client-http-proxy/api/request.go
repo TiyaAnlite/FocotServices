@@ -1,10 +1,20 @@
-package main
+package api
 
 import (
+	"encoding/json"
+	"github.com/GUAIK-ORG/go-snowflake/snowflake"
+	"github.com/TiyaAnlite/FocotServicesCommon/natsx"
 	"github.com/levigross/grequests"
 	"net/http"
 	"strconv"
+	"time"
 )
+
+var snowFlake *snowflake.Snowflake
+
+func init() {
+	snowFlake, _ = snowflake.NewSnowflake(int64(0), int64(0))
+}
 
 type Request struct {
 	Protocol        string            `json:"protocol,omitempty" default:"https"`
@@ -113,4 +123,26 @@ func WithHeaderEchoRequest() RequestOption {
 	return func(request *Request) {
 		request.ResponseHeaders = true
 	}
+}
+
+// SendRequest Quick send request and get response
+func SendRequest(n *natsx.NatsHelper, nodeSubject string, request *Request, timeout int) (data *ProxyResponse, err error) {
+	var resp *ProxyPackedResponse
+	err = n.Ec.Request(nodeSubject, request, &resp, time.Duration(int64(time.Second)*int64(timeout)))
+	if err != nil {
+		return
+	}
+	data, err = PrepareUnPackedResponse(resp)
+	return
+}
+
+// SendTypedRequest Quit send request and get typed data
+func SendTypedRequest[T any](n *natsx.NatsHelper, nodeSubject string, request *Request, timeout int) (data *T, err error) {
+	var respData *ProxyResponse
+	respData, err = SendRequest(n, nodeSubject, request, timeout)
+	if err != nil {
+		return
+	}
+	err = json.Unmarshal(respData.Data, &data)
+	return
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"github.com/GUAIK-ORG/go-snowflake/snowflake"
 	"github.com/TiyaAnlite/FocotServicesCommon/envx"
 	"github.com/TiyaAnlite/FocotServicesCommon/natsx"
 	"github.com/TiyaAnlite/FocotServicesCommon/tracex"
@@ -38,7 +37,6 @@ var (
 	cfg         = &config{}
 	mq          *natsx.NatsHelper
 	traceHelper = &tracex.ServiceTraceHelper{}
-	snowFlake   *snowflake.Snowflake
 	scheduler   = &TaskScheduler{}
 )
 
@@ -47,7 +45,6 @@ func init() {
 	flag.Parse()
 	envx.MustLoadEnv(cfg)
 	traceHelper.SetupTrace()
-	snowFlake, _ = snowflake.NewSnowflake(int64(0), int64(0))
 }
 
 func main() {

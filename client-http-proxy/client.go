@@ -6,78 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	. "github.com/TiyaAnlite/FocotServices/client-http-proxy/api"
 	"github.com/levigross/grequests"
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/klog/v2"
-	"net/http"
 	"strings"
 	"time"
 )
-
-type ProxyPackedResponse struct {
-	Ok      bool   `json:"ok,omitempty"`
-	Payload []byte `json:"payload,omitempty"`
-	Gzip    bool   `json:"gzip,omitempty"`
-}
-
-type ProxyResponse struct {
-	StatusCode int         `json:"status_code,omitempty"`
-	Data       []byte      `json:"data,omitempty"`
-	Header     http.Header `json:"header,omitempty"`
-}
-
-type MetaResponse struct {
-	NodeId            string   `json:"node_id"`
-	Groups            []string `json:"groups"`
-	RateLimitMs       int      `json:"rate_limit_ms"`
-	GzipMinLength     int      `json:"gzip_min_length"`
-	Uptime            int      `json:"uptime"`
-	HeartbeatInterval int      `json:"heartbeat_interval"`
-}
-
-const (
-	TASK_ON_PROCESS = iota
-	TASK_SCHEDULED
-	TASK_FINISHED
-	TASK_FAILED
-)
-
-type taskStatus int
-
-type RequestProcessMsg struct {
-	Status    taskStatus    `json:"status"`
-	RequestId string        `json:"request_id"`
-	TraceId   trace.TraceID `json:"trace_id"`
-}
-
-// PrepareUnPackedResponse 返回包数据预处理
-func PrepareUnPackedResponse(response *ProxyPackedResponse) (*ProxyResponse, error) {
-	payload := response.Payload
-	if response.Gzip {
-		buf := bytes.NewReader(response.Payload)
-		reader, err := gzip.NewReader(buf)
-		if err != nil {
-			klog.Errorf("Error at reading gzip data: %s", err.Error())
-			return nil, err
-		}
-		var b []byte
-		_, err = reader.Read(b)
-		if err != nil {
-			klog.Errorf("Error at reading gzip data: %s", err.Error())
-			return nil, err
-		}
-		payload = b
-	}
-	var resp ProxyResponse
-	if err := json.Unmarshal(payload, &resp); err != nil {
-		klog.Errorf("Error at unmarshal payload: %s", err.Error())
-		return nil, err
-	}
-
-	return &resp, nil
-}
 
 func PackResponse(response *grequests.Response, request *Request) ([]byte, error) {
 	// Payload
@@ -197,7 +134,7 @@ func waitingRequest(requestFunc func() (*grequests.Response, error), respChan ch
 	}
 }
 
-func updateTaskStatus(newStatus taskStatus, requestId string, traceId trace.TraceID) error {
+func updateTaskStatus(newStatus TaskStatus, requestId string, traceId trace.TraceID) error {
 	if err := mq.PublishJson(strings.Join([]string{cfg.ServiceId, "task", requestId}, "."), &RequestProcessMsg{newStatus, requestId, traceId}); err != nil {
 		klog.ErrorfDepth(1, "Failed update task status: %s", err.Error())
 		return err

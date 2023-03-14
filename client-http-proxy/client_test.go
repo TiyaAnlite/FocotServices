@@ -1,6 +1,7 @@
 package main
 
 import (
+	. "github.com/TiyaAnlite/FocotServices/client-http-proxy/api"
 	"github.com/TiyaAnlite/FocotServicesCommon/natsx"
 	"strings"
 	"testing"
