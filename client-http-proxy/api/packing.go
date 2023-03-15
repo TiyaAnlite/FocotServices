@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"io"
 	"k8s.io/klog/v2"
 )
 
@@ -11,19 +12,19 @@ import (
 func PrepareUnPackedResponse(response *ProxyPackedResponse) (*ProxyResponse, error) {
 	payload := response.Payload
 	if response.Gzip {
-		buf := bytes.NewReader(response.Payload)
-		reader, err := gzip.NewReader(buf)
+		reader, err := gzip.NewReader(bytes.NewReader(response.Payload))
+		defer reader.Close()
 		if err != nil {
 			klog.Errorf("Error at reading gzip data: %s", err.Error())
 			return nil, err
 		}
-		var b []byte
-		_, err = reader.Read(b)
+		var buffer bytes.Buffer
+		_, err = io.Copy(&buffer, reader)
 		if err != nil {
 			klog.Errorf("Error at reading gzip data: %s", err.Error())
 			return nil, err
 		}
-		payload = b
+		payload = buffer.Bytes()
 	}
 	var resp ProxyResponse
 	if err := json.Unmarshal(payload, &resp); err != nil {
