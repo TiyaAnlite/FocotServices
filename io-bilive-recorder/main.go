@@ -18,13 +18,16 @@ import (
 
 type config struct {
 	natsx.NatsConfig
-	ConfigFileName    string            `json:"config_file_name" yaml:"configFileName" env:"CONFIG_FILE_NAME" envDefault:"config.yaml"`
-	StreamName        string            `json:"stream_name" yaml:"streamName" env:"STREAM_NAME" envDefault:"biliLiveRecorder"`
-	RefreshInterval   int               `json:"refresh_interval" yaml:"refreshInterval" env:"REFRESH_INTERVAL" envDefault:"1"`
-	StatusDataMaxAge  int               `json:"data_max_age" yaml:"dataMaxAge" env:"STATUS_DATA_MAX_AGE" envDefault:"5"`
-	HistoryDataMaxAge int               `json:"history_data_max_age" yaml:"historyDataMaxAge" env:"HISTORY_DATA_MAX_AGE" envDefault:"21600"`
-	Recorders         map[string]string `json:"recorders" yaml:"recorders"`
-	worker            *worker
+	ConfigFileName           string            `json:"config_file_name" yaml:"configFileName" env:"CONFIG_FILE_NAME" envDefault:"config.yaml"`
+	StreamName               string            `json:"stream_name" yaml:"streamName" env:"STREAM_NAME" envDefault:"biliLiveRecorder"`
+	RefreshInterval          int               `json:"refresh_interval" yaml:"refreshInterval" env:"REFRESH_INTERVAL" envDefault:"1"`
+	StatusDataMaxAge         int               `json:"data_max_age" yaml:"dataMaxAge" env:"STATUS_DATA_MAX_AGE" envDefault:"5"`
+	HistoryDataMaxAge        int               `json:"history_data_max_age" yaml:"historyDataMaxAge" env:"HISTORY_DATA_MAX_AGE" envDefault:"21600"`
+	BCdnRegionLookup         bool              `json:"b_cdn_region_lookup" yaml:"BCdnRegionLookup" env:"BCDN_REGION_LOOKUP"`
+	BCdnRegionUpdateInterval int               `json:"b_cdn_region_update_interval" yaml:"BCdnRegionUpdateInterval" env:"BCDN_REGION_UPDATE_INTERVAL" envDefault:"7200"`
+	GithubProxyNode          string            `json:"github_proxy_node" yaml:"githubProxyNode" env:"GITHUB_PROXY_NODE"`
+	Recorders                map[string]string `json:"recorders" yaml:"recorders"`
+	worker                   *worker
 }
 
 type worker struct {
@@ -45,6 +48,9 @@ func init() {
 	flag.Parse()
 	envx.MustLoadEnv(cfg)
 	envx.MustReadYamlConfig(cfg, cfg.ConfigFileName)
+	if cfg.BCdnRegionLookup && cfg.GithubProxyNode == "" {
+		panic("BCdnRegionLookup is enabled, but GithubProxyNode not set")
+	}
 	traceHelper.SetupTrace()
 }
 
@@ -103,6 +109,9 @@ func main() {
 		StreamName:      cfg.StreamName,
 	}
 	go syncer.doSync(cfg.worker)
+	if cfg.BCdnRegionLookup {
+		go syncer.BCdnUpdater(cfg.worker, cfg.BCdnRegionUpdateInterval, cfg.GithubProxyNode)
+	}
 
 	utils.Wait4CtrlC()
 	klog.Infof("stopping...")

@@ -8,8 +8,9 @@ ENV GOPROXY=https://goproxy.cn,direct \
 WORKDIR /go/src/app
 
 COPY io-bilive-recorder ./io-bilive-recorder
+COPY client-http-proxy ./client-http-proxy
 
-RUN go work init io-bilive-recorder
+RUN go work init io-bilive-recorder client-http-proxy
 RUN go mod download
 RUN go build -tags timetzdata -o /go/bin/app github.com/TiyaAnlite/FocotServices/io-bilive-recorder
 

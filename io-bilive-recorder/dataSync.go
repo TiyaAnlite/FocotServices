@@ -8,16 +8,19 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"k8s.io/klog/v2"
+	"sync"
 	"time"
 )
 
 type taskStatus struct {
-	Padding  bool
-	client   *grequests.Session
-	connWarn bool
-	counter  int
-	tracer   trace.Span
-	taskCtx  context.Context
+	Padding        bool
+	client         *grequests.Session
+	streamingState map[int]bool
+	recordingState map[int]bool
+	connWarn       bool
+	counter        int
+	tracer         trace.Span
+	taskCtx        context.Context
 }
 
 type DataSyncer struct {
@@ -26,8 +29,11 @@ type DataSyncer struct {
 	MaxRequestTime  int
 	StreamName      string
 	taskStatus      map[string]*taskStatus
+	bcdn            *BCdnDnsData
+	bcdnRegions     map[string]*BCdnDomainInfo
 	syncStarted     bool
 	wg              *worker
+	mu              sync.RWMutex
 }
 
 func (syncer *DataSyncer) doSync(worker *worker) {
@@ -43,9 +49,11 @@ func (syncer *DataSyncer) doSync(worker *worker) {
 	syncer.taskStatus = make(map[string]*taskStatus, len(syncer.Recorders))
 	for serverName := range syncer.Recorders {
 		syncer.taskStatus[serverName] = &taskStatus{
-			Padding:  false,
-			connWarn: false,
-			counter:  0,
+			Padding:        false,
+			streamingState: make(map[int]bool),
+			recordingState: make(map[int]bool),
+			connWarn:       false,
+			counter:        0,
 		}
 	}
 	ticker := time.NewTicker(time.Duration(int64(time.Second) * int64(syncer.RefreshInterval)))
@@ -120,11 +128,27 @@ func (syncer *DataSyncer) doRequest(servername string, recorderUrl string) {
 	apiTrace.End()
 	_, parseTrace := syncer.wg.Start(status.taskCtx, "biliveRoomsParse")
 	defer parseTrace.End()
-	var rooms []BiliveRecorderRecord
+	var rooms []*BiliveRecorderRecord
 	if err := resp.JSON(&rooms); err != nil {
 		parseTrace.RecordError(err)
 		klog.Errorf("[%s]On parse rooms: %s", servername, err.Error())
 		return
+	}
+	// Lookup stream domain
+	lookupList := make([]string, len(rooms))
+	for i, room := range rooms {
+		lookupList[i] = room.IOStats.StreamHost
+	}
+	lookupResult := syncer.BCdnLookupBatch(lookupList)
+	for i, room := range rooms {
+		if lookupResult[i] != nil {
+			var isp string
+			var ok bool
+			if isp, ok = ISPName[lookupResult[i].RegionInfo.ISP]; !ok {
+				isp = lookupResult[i].RegionInfo.ISP
+			}
+			room.IOStats.HostLookup = fmt.Sprintf("%s-%s", lookupResult[i].RegionInfo.RegionName, isp)
+		}
 	}
 	parseTrace.End()
 	if status.connWarn {
@@ -141,6 +165,16 @@ func (syncer *DataSyncer) doRequest(servername string, recorderUrl string) {
 	updated := 0
 	updateError := 0
 	for _, room := range rooms {
+		streamingState, ok := status.streamingState[room.RoomID]
+		if !ok || streamingState != room.Streaming {
+			klog.Infof("[%s](%d){%s}Stream state changing to: %t", servername, room.RoomID, room.Name, room.Streaming)
+			status.streamingState[room.RoomID] = room.Streaming
+		}
+		recordingState, ok := status.recordingState[room.RoomID]
+		if !ok || recordingState != room.Recording {
+			klog.Infof("[%s](%d){%s}Record state changing to: %t", servername, room.RoomID, room.Name, room.Recording)
+			status.recordingState[room.RoomID] = room.Recording
+		}
 		if !room.Recording {
 			// Report recording rooms only
 			continue

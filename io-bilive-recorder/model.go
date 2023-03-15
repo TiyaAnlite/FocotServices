@@ -50,6 +50,7 @@ type BiliveRecorderStats struct {
 
 type BiliveRecorderIOStats struct {
 	StreamHost             string    `json:"streamHost"`
+	HostLookup             string    `json:"hostLookup"`
 	StartTime              time.Time `json:"startTime"`
 	EndTime                time.Time `json:"endTime"`
 	Duration               float64   `json:"duration"`
@@ -58,4 +59,26 @@ type BiliveRecorderIOStats struct {
 	DiskWriteDuration      float64   `json:"diskWriteDuration"`
 	DiskBytesWritten       int       `json:"diskBytesWritten"`
 	DiskMBps               any       `json:"diskMBps"` // NaN or float
+}
+
+type BCdnDnsData struct {
+	Version string                       `json:"time"`
+	DNSList map[string][]*BCdnRegionNode `json:"dns"`
+}
+
+type BCdnRegionNode struct {
+	ISP        string                    `json:"isp"`
+	RegionCode string                    `json:"regionCode"`
+	RegionName string                    `json:"regionName"`
+	Domains    map[string]*BCdnDomainIPs `json:"domains"`
+}
+
+type BCdnDomainIPs struct {
+	IPv4 []string `json:"ipv4"`
+	IPv6 []string `json:"ipv6"`
+}
+
+type BCdnDomainInfo struct {
+	IPs        *BCdnDomainIPs
+	RegionInfo *BCdnRegionNode
 }
