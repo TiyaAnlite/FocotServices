@@ -1,6 +1,7 @@
 go 1.19
 
 use (
+	./api-http-proxy
 	./client-http-proxy
 	./io-bilive-recorder
 )
