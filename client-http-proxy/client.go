@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func PackResponse(response *grequests.Response, request *Request) ([]byte, error) {
+func PackResponse(response *grequests.Response, request *Request, nodeId string) ([]byte, error) {
 	// Payload
 	proxyResp := &ProxyResponse{
 		StatusCode: response.StatusCode,
@@ -54,6 +54,7 @@ func PackResponse(response *grequests.Response, request *Request) ([]byte, error
 	// Pack
 	respData := &ProxyPackedResponse{
 		Ok:      response.Ok,
+		Node:    nodeId,
 		Payload: payload,
 		Gzip:    gzipFlag,
 	}
@@ -205,7 +206,7 @@ ProcessResp:
 
 	_, packTrace := cfg.worker.Start(ctx, "response-compress")
 	defer packTrace.End()
-	respData, err := PackResponse(resp, request)
+	respData, err := PackResponse(resp, request, cfg.NodeId)
 	if err != nil {
 		packTrace.RecordError(err)
 		packTrace.SetAttributes(attribute.String("http.response.content", resp.String()))

@@ -4,6 +4,7 @@ import "net/http"
 
 type ProxyPackedResponse struct {
 	Ok      bool   `json:"ok,omitempty"`
+	Node    string `json:"node,omitempty"`
 	Payload []byte `json:"payload,omitempty"`
 	Gzip    bool   `json:"gzip,omitempty"`
 }
