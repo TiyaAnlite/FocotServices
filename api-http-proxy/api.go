@@ -33,6 +33,7 @@ func requestProxy(c echo.Context) error {
 	if req.Timeout == 0 {
 		req.Timeout = 10
 	}
+	req.Payload.ResponseHeaders = true // Request headers info
 	_, mqTrace := cfg.worker.Start(ctx, "sendNATSRequest")
 	defer mqTrace.End()
 	mqTrace.SetAttributes(attribute.String("node", req.Node))
@@ -42,5 +43,5 @@ func requestProxy(c echo.Context) error {
 		klog.Errorf("At send request: %s", err.Error())
 		return echox.NormalErrorResponse(c, http.StatusBadGateway, http.StatusBadRequest, err.Error())
 	}
-	return c.JSONBlob(resp.StatusCode, resp.Data)
+	return c.Blob(resp.StatusCode, resp.Header.Get("Content-Type"), resp.Data)
 }
