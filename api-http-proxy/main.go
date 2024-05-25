@@ -61,7 +61,7 @@ func main() {
 		return
 	}
 
-	go echox.Run(cfg.EchoConfig, setupRoutes)
+	go echox.Run(&cfg.EchoConfig, setupRoutes)
 
 	utils.Wait4CtrlC()
 	klog.Infof("stopping...")

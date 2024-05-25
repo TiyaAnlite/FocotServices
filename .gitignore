@@ -15,3 +15,8 @@
 # vendor/
 .idea
 .env
+
+# nextcloud sync
+.nextcloudsync.log
+.sync_*
+Desktop.ini
