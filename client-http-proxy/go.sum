@@ -1,6 +1,6 @@
 github.com/GUAIK-ORG/go-snowflake v0.0.0-20200116064823-220c4260e85f h1:RDkg3pyE1qGbBpRWmvSN9RNZC5nUrOaEPiEpEb8y2f0=
 github.com/GUAIK-ORG/go-snowflake v0.0.0-20200116064823-220c4260e85f/go.mod h1:zA7AF9RTfpluCfz0omI4t5KCMaWHUMicsZoMccnaT44=
-github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20240524182021-15f77870107e h1:G5RmIxVLxaCmNy3MZz3NT+qAY3d89tlsr9e4kKOd+0U=
+github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20240526073304-39fc118f33fe h1:jNaKTzlQHsz/a2+wwdwVXxIXKOLycQWnWPG8RV57WJw=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
 github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=
 github.com/caarlos0/env/v6 v6.10.1 h1:t1mPSxNpei6M5yAeu1qtRdPAK29Nbcf/n3G7x+b3/II=

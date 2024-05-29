@@ -3,7 +3,7 @@ module github.com/TiyaAnlite/FocotServices/client-http-proxy
 go 1.22
 
 require (
-	github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20240524182021-15f77870107e
+	github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20240526073304-39fc118f33fe
 	k8s.io/klog/v2 v2.90.0
 )
 

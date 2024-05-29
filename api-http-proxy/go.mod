@@ -3,7 +3,7 @@ module github.com/TiyaAnlite/FocotServices/api-http-proxy
 go 1.22
 
 require (
-	github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20240524182021-15f77870107e
+	github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20240526073304-39fc118f33fe
 	github.com/labstack/echo/v4 v4.11.3
 	go.opentelemetry.io/otel v1.21.0
 	go.opentelemetry.io/otel/trace v1.21.0

@@ -48,7 +48,7 @@ func (syncer *DataSyncer) BCdnLookupBatch(domains []string) (regions []*BCdnDoma
 func (syncer *DataSyncer) GetBCdn(proxyNode string) (data *BCdnDnsData, err error) {
 	req := proxy.NewRequest(
 		proxy.WithRequestHost("raw.githubusercontent.com"),
-		proxy.WithRequestPath("/BililiveRecorder/website/main/data/dns_data_bcdn.json"),
+		proxy.WithRequestPath("/BililiveRecorder/website/main/src/data/cdn/bcdn.json"),
 	)
 	data, err = proxy.SendTypedRequest[BCdnDnsData](mq, proxyNode, req, 10)
 	return

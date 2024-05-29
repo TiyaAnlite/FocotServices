@@ -3,7 +3,7 @@ module github.com/TiyaAnlite/FocotServices/io-bilive-recorder
 go 1.22
 
 require (
-	github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20240524182021-15f77870107e
+	github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20240526073304-39fc118f33fe
 	github.com/levigross/grequests v0.0.0-20221222020224-9eee758d18d5
 	github.com/nats-io/nats.go v1.24.0
 	go.opentelemetry.io/otel v1.21.0
