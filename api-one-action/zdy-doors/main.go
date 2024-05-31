@@ -4,16 +4,17 @@ import (
 	"github.com/TiyaAnlite/FocotServices/api-one-action/api"
 	"github.com/TiyaAnlite/FocotServicesCommon/envx"
 	"github.com/labstack/echo/v4"
-	"k8s.io/klog/v2"
 )
 
 type config struct {
-	Key string `json:"key" yaml:"key" env:"ZDY_KEY"`
+	Key      string `json:"key" yaml:"key" env:"ZDY_KEY"`
+	Phone    string `json:"phone" yaml:"phone" env:"ZDY_PHONE,required"`
+	Password string `json:"password" yaml:"password" env:"ZDY_PASSWORD,required"`
 }
 
 var (
 	cfg      = &config{}
-	instance = &ZdyDoors{}
+	instance = &ZdyService{}
 )
 
 func init() {
@@ -21,18 +22,21 @@ func init() {
 	api.Components = append(api.Components, instance)
 }
 
-type ZdyDoors struct {
+type ZdyService struct {
+	token       string
+	communityId int
 }
 
-func (i *ZdyDoors) Name() string {
+func (*ZdyService) Name() string {
 	return "zdy"
 }
 
-func (i *ZdyDoors) Register(r *echo.Group, e *echo.Echo) {
-	klog.Infof("zdy running")
+func (*ZdyService) Register(r *echo.Group, e *echo.Echo) {
+	r.GET("/doors", listDoorDevs)
+	r.GET("/open", openDoor)
 }
 
-func (i *ZdyDoors) Config() *api.ComponentConfig {
+func (*ZdyService) Config() *api.ComponentConfig {
 	return &api.ComponentConfig{
 		Auth: true,
 		Key:  cfg.Key,

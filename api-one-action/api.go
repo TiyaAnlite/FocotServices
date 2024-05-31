@@ -37,7 +37,10 @@ func setupRoutes(e *echo.Echo) {
 }
 
 func useAuth(key string) echo.MiddlewareFunc {
-	return middleware.KeyAuth(func(auth string, c echo.Context) (bool, error) {
+	config := middleware.DefaultKeyAuthConfig
+	config.KeyLookup = "header:Authorization,query:key,header:X-Api-Key"
+	config.Validator = func(auth string, c echo.Context) (bool, error) {
 		return key == auth, nil
-	})
+	}
+	return middleware.KeyAuthWithConfig(config)
 }

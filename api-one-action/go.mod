@@ -5,6 +5,7 @@ go 1.22
 require (
 	github.com/TiyaAnlite/FocotServicesCommon v0.0.0-20240526073304-39fc118f33fe
 	github.com/labstack/echo/v4 v4.11.3
+	github.com/levigross/grequests v0.0.0-20221222020224-9eee758d18d5
 	k8s.io/klog/v2 v2.90.0
 )
 
@@ -20,6 +21,7 @@ require (
 	github.com/go-playground/validator v9.31.0+incompatible // indirect
 	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
+	github.com/google/go-querystring v1.0.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.18.1 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/labstack/gommon v0.4.0 // indirect
