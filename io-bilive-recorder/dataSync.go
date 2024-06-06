@@ -114,15 +114,22 @@ func (syncer *DataSyncer) doRequest(servername string, recorderUrl string) {
 		status.client = grequests.NewSession(ro)
 	}
 	_, apiTrace := syncer.wg.Start(status.taskCtx, "apiRequest")
+	startTime := time.Now()
 	apiTrace.SetAttributes(attribute.String("bilive.recorderUrl", recorderUrl))
 	defer apiTrace.End()
 	resp, err := status.client.Get(fmt.Sprintf("http://%s/api/room", recorderUrl), nil)
+	duration := time.Since(startTime)
+	metrics := BiliveRecorderMetrics{
+		NodeName:        servername,
+		RequestDuration: duration,
+	}
 	if err != nil {
 		if !status.connWarn {
 			apiTrace.RecordError(err)
 			klog.Errorf("[%s]On sync: %s", servername, err.Error())
 			status.connWarn = true
 		}
+		exporter.UpdateChan <- &metrics // failed update
 		return
 	}
 	apiTrace.End()
@@ -132,6 +139,7 @@ func (syncer *DataSyncer) doRequest(servername string, recorderUrl string) {
 	if err := resp.JSON(&rooms); err != nil {
 		parseTrace.RecordError(err)
 		klog.Errorf("[%s]On parse rooms: %s", servername, err.Error())
+		exporter.UpdateChan <- &metrics // failed update
 		return
 	}
 	// Lookup stream domain
@@ -150,6 +158,8 @@ func (syncer *DataSyncer) doRequest(servername string, recorderUrl string) {
 			room.IOStats.HostLookup = fmt.Sprintf("%s-%s", lookupResult[i].RegionInfo.RegionName, isp)
 		}
 	}
+	metrics.Rooms = rooms
+	exporter.UpdateChan <- &metrics // successful update
 	parseTrace.End()
 	if status.connWarn {
 		status.tracer.AddEvent("Sync re-active")

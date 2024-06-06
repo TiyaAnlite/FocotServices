@@ -27,6 +27,7 @@ type config struct {
 	BCdnRegionUpdateInterval int               `json:"b_cdn_region_update_interval" yaml:"BCdnRegionUpdateInterval" env:"BCDN_REGION_UPDATE_INTERVAL" envDefault:"7200"`
 	GithubProxyNode          string            `json:"github_proxy_node" yaml:"githubProxyNode" env:"GITHUB_PROXY_NODE"`
 	Recorders                map[string]string `json:"recorders" yaml:"recorders"`
+	ExporterPort             int               `json:"exporter_port" yaml:"exporterPort" env:"EXPORTER_PORT" envDefault:"9090"`
 	worker                   *worker
 }
 
@@ -41,6 +42,7 @@ var (
 	mq          *natsx.NatsHelper
 	traceHelper = &tracex.ServiceTraceHelper{}
 	syncer      *DataSyncer
+	exporter    = &MetricsExporter{}
 )
 
 func init() {
@@ -101,6 +103,8 @@ func main() {
 	}() // Exit all 1
 	t1.End()
 	initTracer.End()
+
+	exporter.Start()
 
 	syncer = &DataSyncer{
 		Recorders:       cfg.Recorders,

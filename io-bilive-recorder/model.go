@@ -1,10 +1,18 @@
 package main
 
-import "time"
+import (
+	"time"
+)
 
 type BiliveRecorderRecord struct {
-	RecordTime time.Time `json:"record_time"`
+	RecordTime time.Time `json:"record_time"` // only available at pushing history(room is recording)
 	BiliveRecorderRoom
+}
+
+type BiliveRecorderMetrics struct {
+	NodeName        string                  `json:"node_name"`
+	RequestDuration time.Duration           `json:"request_duration"`
+	Rooms           []*BiliveRecorderRecord `json:"rooms"`
 }
 
 type BiliveRecorderRoom struct {
@@ -81,4 +89,13 @@ type BCdnDomainIPs struct {
 type BCdnDomainInfo struct {
 	IPs        *BCdnDomainIPs
 	RegionInfo *BCdnRegionNode
+}
+
+type RoomMetricsLabel struct {
+	Name           string `json:"name"`
+	Title          string `json:"title"`
+	AreaNameParent string `json:"areaNameParent"`
+	AreaNameChild  string `json:"areaNameChild"`
+	StreamHost     string `json:"streamHost"`
+	HostLookup     string `json:"hostLookup"`
 }
