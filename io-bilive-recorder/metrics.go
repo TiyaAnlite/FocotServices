@@ -134,6 +134,9 @@ func (e *MetricsExporter) updateMetrics() {
 		printRoom := true
 		if len(metrics.Rooms) == 0 {
 			printRoom = false // do not print when node whole offline
+			if len(e.roomVersions[metrics.NodeName]) == 0 {
+				continue
+			}
 			klog.Infof("[metrics]clean expired node: %s", metrics.NodeName)
 		}
 		for roomID, v := range e.roomVersions[metrics.NodeName] {
