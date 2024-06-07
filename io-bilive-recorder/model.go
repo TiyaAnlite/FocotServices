@@ -76,8 +76,8 @@ type BCdnDnsData struct {
 
 type BCdnRegionNode struct {
 	ISP        string                    `json:"isp"`
-	RegionCode string                    `json:"regionCode"`
-	RegionName string                    `json:"regionName"`
+	RegionCode string                    `json:"region_code"`
+	RegionName string                    `json:"region_name"`
 	Domains    map[string]*BCdnDomainIPs `json:"domains"`
 }
 
@@ -92,10 +92,15 @@ type BCdnDomainInfo struct {
 }
 
 type RoomMetricsLabel struct {
-	Name           string `json:"name"`
-	Title          string `json:"title"`
-	AreaNameParent string `json:"areaNameParent"`
-	AreaNameChild  string `json:"areaNameChild"`
-	StreamHost     string `json:"streamHost"`
-	HostLookup     string `json:"hostLookup"`
+	NodeID           string `json:"node_id"`
+	RoomID           string `json:"room_id"`
+	Name             string `json:"name"`
+	Title            string `json:"title"`
+	AreaNameParent   string `json:"area_name_parent"`
+	AreaNameChild    string `json:"area_name_child"`
+	StreamHost       string `json:"stream_host"`
+	HostLookup       string `json:"host_lookup"`
+	Recording        string `json:"recording"`
+	Streaming        string `json:"streaming"`
+	DanmakuConnected string `json:"danmaku_connected"`
 }

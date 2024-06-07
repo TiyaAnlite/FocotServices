@@ -3,16 +3,19 @@ package main
 import (
 	"fmt"
 	"github.com/duke-git/lancet/v2/condition"
+	"github.com/duke-git/lancet/v2/slice"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/klog/v2"
 	"net/http"
+	"reflect"
 	"strconv"
 	"time"
 )
 
 var (
-	MetricsLabelNames = []string{"node_id", "room_id"}
+	MetricsLabelNames     = []string{"node_id", "room_id"}
+	MetricsRoomLabelNames = (&RoomMetricsLabel{}).Keys()
 )
 
 type MetricsCollector interface {
@@ -25,9 +28,10 @@ type MetricsExporter struct {
 	registry     *prometheus.Registry
 	collector    []MetricsCollector
 	roomVersions map[string]map[int]time.Time // node_id:room_id:version
-	// TODO: room info export support
-	roomLabels map[string]map[int]prometheus.Labels // node_id:room_id:labels
+	roomLabels   map[string]map[int][]string  // node_id:room_id:labels
 	// metrics
+	mRoomInfo               *prometheus.GaugeVec
+	mRequestDuration        *prometheus.HistogramVec
 	mAutoRecord             *prometheus.GaugeVec
 	mRecording              *prometheus.GaugeVec
 	mStreaming              *prometheus.GaugeVec
@@ -45,6 +49,10 @@ type MetricsExporter struct {
 
 func (e *MetricsExporter) initMetrics() {
 	e.registry = prometheus.NewRegistry()
+	e.mRoomInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{Name: "blive_recorder_room_info"}, MetricsRoomLabelNames)
+	e.mRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{Name: "blive_request_duration", Help: "units ms"}, []string{"node_id"})
 	e.mAutoRecord = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{Name: "blive_recorder_auto_record", Help: "units bool"}, MetricsLabelNames)
 	e.mRecording = prometheus.NewGaugeVec(
@@ -74,6 +82,7 @@ func (e *MetricsExporter) initMetrics() {
 	e.collector = []MetricsCollector{e.mAutoRecord, e.mRecording, e.mStreaming, e.mDanmakuConnected, e.mSessionDuration,
 		e.mTotalInputBytes, e.mCurrentFileSize, e.mSessionMaxTimestamp, e.mFileMaxTimestamp, e.mNetworkBytesDownloaded,
 		e.mDiskBytesWritten, e.mNetworkMbps, e.mDiskMBps}
+	e.registry.MustRegister(e.mRoomInfo, e.mRequestDuration) // unmanaged from room collector
 	for _, collector := range e.collector {
 		if err := e.registry.Register(collector); err != nil {
 			klog.Fatalf("Register collector failed: %s", err.Error())
@@ -84,10 +93,10 @@ func (e *MetricsExporter) initMetrics() {
 func (e *MetricsExporter) Start() {
 	e.UpdateChan = make(chan *BiliveRecorderMetrics, 16)
 	e.roomVersions = make(map[string]map[int]time.Time)
-	e.roomLabels = make(map[string]map[int]prometheus.Labels)
+	e.roomLabels = make(map[string]map[int][]string)
 	for node, _ := range cfg.Recorders {
 		e.roomVersions[node] = make(map[int]time.Time)
-		e.roomLabels[node] = make(map[int]prometheus.Labels)
+		e.roomLabels[node] = make(map[int][]string)
 	}
 	e.initMetrics()
 	http.Handle("/metrics", promhttp.HandlerFor(
@@ -106,9 +115,39 @@ func (e *MetricsExporter) updateMetrics() {
 	klog.Infof("[metrics]exporter started")
 	for metrics := range e.UpdateChan {
 		now := time.Now()
+		e.mRequestDuration.WithLabelValues(metrics.NodeName).Observe(float64(metrics.RequestDuration.Milliseconds()))
 		// create & update
 		for _, room := range metrics.Rooms {
-			withValues := []string{metrics.NodeName, strconv.Itoa(room.RoomID)} // node_id:room_id
+			roomID := strconv.Itoa(room.RoomID)
+
+			// room info
+			roomInfo := RoomMetricsLabel{
+				NodeID:           metrics.NodeName,
+				RoomID:           roomID,
+				Name:             room.Name,
+				Title:            room.Title,
+				AreaNameParent:   room.AreaNameParent,
+				AreaNameChild:    room.AreaNameChild,
+				StreamHost:       room.IOStats.StreamHost,
+				HostLookup:       room.IOStats.HostLookup,
+				Recording:        condition.TernaryOperator(room.Recording, "1", "0"),
+				Streaming:        condition.TernaryOperator(room.Streaming, "1", "0"),
+				DanmakuConnected: condition.TernaryOperator(room.DanmakuConnected, "1", "0"),
+			}
+			roomInfoValues := roomInfo.Values()
+			if oldInfo, ok := e.roomLabels[metrics.NodeName][room.RoomID]; !ok || !slice.Equal(roomInfoValues, oldInfo) {
+				klog.Infof("[metrics]update roomInfo[%d] from node[%s]", room.RoomID, metrics.NodeName)
+				// need create(!ok) or update(!equal)
+				if ok {
+					// !equal
+					e.mRoomInfo.DeleteLabelValues(oldInfo...)
+				}
+				e.mRoomInfo.WithLabelValues(roomInfoValues...).Set(1)
+				e.roomLabels[metrics.NodeName][room.RoomID] = roomInfoValues
+			}
+
+			// room metrics
+			withValues := []string{metrics.NodeName, roomID} // node_id:room_id
 			e.mAutoRecord.WithLabelValues(withValues...).Set(float64(condition.TernaryOperator(room.AutoRecord, 1, 0)))
 			e.mRecording.WithLabelValues(withValues...).Set(float64(condition.TernaryOperator(room.Recording, 1, 0)))
 			e.mStreaming.WithLabelValues(withValues...).Set(float64(condition.TernaryOperator(room.Streaming, 1, 0)))
@@ -130,15 +169,21 @@ func (e *MetricsExporter) updateMetrics() {
 			}())
 			e.roomVersions[metrics.NodeName][room.RoomID] = now
 		}
+
 		// scan & delete
 		printRoom := true
 		if len(metrics.Rooms) == 0 {
+			// expired node
 			printRoom = false // do not print when node whole offline
-			if len(e.roomVersions[metrics.NodeName]) == 0 {
-				continue
+			if len(e.roomVersions[metrics.NodeName]) != 0 {
+				klog.Infof("[metrics]clean expired node: %s", metrics.NodeName)
 			}
-			klog.Infof("[metrics]clean expired node: %s", metrics.NodeName)
+			// clean room info
+			for _, oldInfo := range e.roomLabels[metrics.NodeName] {
+				e.mRoomInfo.DeleteLabelValues(oldInfo...)
+			}
 		}
+		// clean room metrics
 		for roomID, v := range e.roomVersions[metrics.NodeName] {
 			if v != now {
 				if printRoom {
@@ -151,4 +196,32 @@ func (e *MetricsExporter) updateMetrics() {
 			}
 		}
 	}
+}
+
+func (l *RoomMetricsLabel) fields() (fields []reflect.StructField) {
+	v := reflect.ValueOf(l).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		fieldInfo := v.Type().Field(i)
+		if !fieldInfo.IsExported() {
+			continue
+		}
+		fields = append(fields, fieldInfo)
+	}
+	return
+}
+
+func (l *RoomMetricsLabel) Keys() (keys []string) {
+	for _, field := range l.fields() {
+		keys = append(keys, field.Tag.Get("json"))
+	}
+	return
+}
+
+func (l *RoomMetricsLabel) Values() (values []string) {
+	value := reflect.ValueOf(l).Elem()
+	for _, field := range l.fields() {
+		v := value.FieldByName(field.Name)
+		values = append(values, v.String())
+	}
+	return
 }
