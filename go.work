@@ -1,8 +1,12 @@
 go 1.22.0
 
 use (
+	./api-bff-layer
+	./api-certificate-manager
 	./api-http-proxy
+	./api-minecraft-data
 	./api-one-action
 	./client-http-proxy
 	./io-bilive-recorder
+	./io-ys-vid-downloader
 )
