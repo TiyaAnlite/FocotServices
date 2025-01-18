@@ -12,7 +12,7 @@ type BiliveRecorderRecord struct {
 type BiliveRecorderMetrics struct {
 	NodeName        string                  `json:"node_name"`
 	RequestDuration time.Duration           `json:"request_duration"`
-	Rooms           []*BiliveRecorderRecord `json:"rooms"`
+	Rooms           []*BiliveRecorderRecord `json:"rooms"` // will nil when sync failed
 }
 
 type BiliveRecorderRoom struct {
