@@ -144,7 +144,7 @@
         <mxCell id="V_1HUPMDP4IkT2V314-I-1" value="WsAgent&lt;div&gt;WS弹幕客户端&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=15;" parent="1" vertex="1">
           <mxGeometry x="260" y="80" width="120" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="V_1HUPMDP4IkT2V314-I-2" value="&lt;font style=&quot;font-size: 15px;&quot;&gt;Blive Source&lt;/font&gt;&lt;div&gt;&lt;font style=&quot;font-size: 15px;&quot;&gt;弹幕服务&lt;/font&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+        <mxCell id="V_1HUPMDP4IkT2V314-I-2" value="&lt;font style=&quot;font-size: 15px;&quot;&gt;Blive Source&lt;/font&gt;&lt;div&gt;&lt;font style=&quot;font-size: 15px;&quot;&gt;官方弹幕服务&lt;/font&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;" parent="1" vertex="1">
           <mxGeometry x="80" y="80" width="120" height="200" as="geometry" />
         </mxCell>
         <mxCell id="V_1HUPMDP4IkT2V314-I-3" value="WsAgent&lt;div&gt;WS弹幕客户端&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=15;" parent="1" vertex="1">
@@ -258,7 +258,7 @@
         <mxCell id="V_1HUPMDP4IkT2V314-I-39" value="Agent Controller&lt;div&gt;客户端控制器&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=20;" parent="1" vertex="1">
           <mxGeometry x="540" y="300" width="140" height="120" as="geometry" />
         </mxCell>
-        <mxCell id="V_1HUPMDP4IkT2V314-I-40" value="Damaku Parser&lt;div&gt;弹幕处理器&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=20;" parent="1" vertex="1">
+        <mxCell id="V_1HUPMDP4IkT2V314-I-40" value="Damaku Parser&lt;div&gt;消息流处理器&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=20;" parent="1" vertex="1">
           <mxGeometry x="687" y="150" width="140" height="120" as="geometry" />
         </mxCell>
         <mxCell id="V_1HUPMDP4IkT2V314-I-47" value="IOBliveRecorder&lt;div&gt;录播姬监视服务&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=15;" parent="1" vertex="1">

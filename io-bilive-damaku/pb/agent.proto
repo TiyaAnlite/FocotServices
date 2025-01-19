@@ -1,0 +1,152 @@
+syntax = "proto3";
+package pb;
+option go_package = "pb/agent";
+
+// normal response for request msg
+message AgentControlResponse {
+  uint32 Status = 1;  // 0:OK, 1:Error
+  optional string Error = 2;
+}
+
+// bind to agent.info when init
+message AgentInfo {
+  string ID = 1;
+  AgentType Type = 2;
+
+  enum AgentType {
+    UnknownAgent = 0;
+    RealTimeAgent = 1;
+    PlaybackAgent = 2;
+  }
+}
+
+// bind to control request agent.[AgentID].init
+message AgentInit {
+  string BUVID = 1;
+  string UID = 2;
+  string Cookie = 3;
+  optional string UA = 4;
+  map<string, string> Header = 5;
+  optional uint32 PriorityMode = 6;  // defined const at github.com/FishZe/go-bili-chat/client:PriorityMode
+}
+
+// bind to control request agent.[AgentID].action
+message AgentAction {
+  AgentActionType Type = 1;
+  optional uint64 RoomID = 2;
+
+  enum AgentActionType {
+    AddRoom = 0;
+    DelRoom = 1;
+  }
+}
+
+// bind to agent.status
+message AgentStatus {
+  repeated uint32 Watching = 1;
+}
+
+message BasicMsgMeta {
+  uint32 Version = 1;
+  string Agent = 2;  // AgentID
+  uint64 TimeStamp = 3;  // MilliTimestamp
+}
+
+message FansMedal {
+  uint64 RoomUID = 1;  // target user id
+  uint32 level = 2;
+  bool Light = 3;
+  GuardLevelType GuardLevel = 4;
+}
+
+enum GuardLevelType {
+  NoGuard = 0;
+  Governor = 1;
+  Admiral = 2;
+  Captain = 3;
+}
+
+// bind to request agent.fansMedal
+message FansMedalMeta {
+  uint64 RoomUID = 1;  // target user id
+  string Name = 2;
+}
+
+// bind to request agent.userInfoMeta
+message UserInfoMeta {
+  uint64 UID = 1;
+  string UserName = 2;
+  optional string Face = 3;  // available at damaku,gift,superChat,onlineRankV2
+  optional uint32 Level = 4;  // available at superChat
+  optional uint32 WealthLevel = 5;  // available at gift
+}
+
+// bind to agent.damaku
+message Damaku {
+  BasicMsgMeta Meta = 1;
+  uint64 UID = 2;
+  string Content = 3;
+  FansMedal Medal = 4;
+}
+
+// bind to agent.gift
+message Gift {
+  BasicMsgMeta Meta = 1;
+  uint64 TID = 2;  // gift msg id
+  uint64 UID = 3;
+  uint32 Count = 4;
+  GiftInfo Info = 5;
+  GiftInfo OriginalInfo = 6;  // include blind gift
+  FansMedal Medal = 7;
+
+  message GiftInfo {
+    uint32 ID = 1;
+    string Name = 2;
+    uint32 Price = 3;  // gold_seeds, = battery / 100 = RMB / 1000
+  }
+}
+
+// bind to agent.guard
+message Guard {
+  BasicMsgMeta Meta = 1;
+  uint64 UID = 2;
+  uint32 Price = 3;  // gold_seeds, = battery / 100 = RMB / 1000
+  GuardGiftType GiftType = 4;
+
+  enum GuardGiftType {
+    UnknownType = 0;
+    Governor = 10001;
+    Admiral = 10002;
+    Captain = 10003;
+  }
+}
+
+message SuperChat {
+  BasicMsgMeta Meta = 1;
+  uint64 ID = 2;  // sc id
+  uint64 UID = 3;
+  string Message = 4;
+  string MessageTrans = 5;
+  uint32 Price = 6;  // RMB, = battery / 10
+  FansMedal Medal = 7;
+}
+
+// bind to agent.online
+message OnlineRankCount {
+  BasicMsgMeta Meta = 1;
+  uint32 Count = 2;
+  uint32 Online = 3;  // current using
+}
+
+// bind to agent.onlineV2
+message OnlineRankV2 {
+  BasicMsgMeta Meta = 1;
+  repeated OnlineRankList list = 2;
+
+  message OnlineRankList {
+    uint32 Rank = 1;
+    uint32 Score = 2;
+    uint64 UID = 3;
+    GuardLevelType GuardLevel = 4;
+  }
+}
