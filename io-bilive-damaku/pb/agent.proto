@@ -4,8 +4,13 @@ option go_package = "pb/agent";
 
 // normal response for request msg
 message AgentControlResponse {
-  uint32 Status = 1;  // 0:OK, 1:Error
+  StatusType Status = 1;  // 0:OK, 1:Error
   optional string Error = 2;
+
+  enum StatusType {
+    OK = 0;
+    Err = 1;
+  }
 }
 
 // bind to agent.info when init
@@ -23,7 +28,7 @@ message AgentInfo {
 // bind to control request agent.[AgentID].init
 message AgentInit {
   string BUVID = 1;
-  string UID = 2;
+  uint64 UID = 2;
   string Cookie = 3;
   optional string UA = 4;
   map<string, string> Header = 5;
