@@ -13,13 +13,13 @@ import (
 
 type config struct {
 	natsx.NatsConfig
-	AgentId       string `json:"agent_id" yaml:"agentId" env:"AGENT_ID"`
-	SubjectPrefix string `json:"subject_prefix" yaml:"subject_prefix" env:"SUBJECT_PREFIX" envDefault:"dmCenter"`
+	AgentId       string `json:"agent_id" yaml:"agentId" env:"AGENT_ID,required"`
+	SubjectPrefix string `json:"subject_prefix" yaml:"subject_prefix" env:"SUBJECT_PREFIX,required" envDefault:"dmCenter"`
 }
 
 var (
 	cfg         = &config{}
-	mq          *natsx.NatsHelper
+	mq          = &natsx.NatsHelper{}
 	traceHelper = &tracex.ServiceTraceHelper{}
 	client      = &DamakuCenterAgent{}
 	worker      = sync.WaitGroup{}
@@ -51,6 +51,7 @@ func main() {
 
 func waiter(cancel context.CancelFunc) {
 	utils.Wait4CtrlC()
+	worker.Done()
 	klog.Info("exiting...")
 	cancel()
 }

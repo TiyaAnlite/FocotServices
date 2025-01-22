@@ -48,7 +48,9 @@ message AgentAction {
 
 // bind to agent.status
 message AgentStatus {
-  repeated uint32 Watching = 1;
+  BasicMsgMeta Meta = 1;
+  repeated uint64 Watching = 2;
+  uint32 bufferUsed = 3;
 }
 
 message BasicMsgMeta {

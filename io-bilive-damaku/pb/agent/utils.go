@@ -3,6 +3,11 @@ package agent
 import (
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
+	"time"
+)
+
+var (
+	VERSION = uint32(1)
 )
 
 func ControlSuccess(controlMsg *nats.Msg) error {
@@ -22,4 +27,16 @@ func ControlError(controlMsg *nats.Msg, err error) error {
 		return err
 	}
 	return controlMsg.Respond(data)
+}
+
+type MetaBuilder func() *BasicMsgMeta
+
+func NewMsgMetaBuilder(agentId string) MetaBuilder {
+	return func() *BasicMsgMeta {
+		return &BasicMsgMeta{
+			Version:   VERSION,
+			Agent:     agentId,
+			TimeStamp: uint64(time.Now().UnixMilli()),
+		}
+	}
 }
