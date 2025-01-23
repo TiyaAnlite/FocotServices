@@ -51,19 +51,20 @@ message AgentStatus {
   BasicMsgMeta Meta = 1;
   repeated uint64 Watching = 2;
   uint32 bufferUsed = 3;
+  map<string, uint32> bufferEventCount = 4;
+}
+
+enum TraceStep {
+  Wait = 0;
+  Process = 1;
 }
 
 message BasicMsgMeta {
   uint32 Version = 1;
   string Agent = 2;  // AgentID
-  uint64 TimeStamp = 3;  // MilliTimestamp
-}
-
-message FansMedal {
-  uint64 RoomUID = 1;  // target user id
-  uint32 level = 2;
-  bool Light = 3;
-  GuardLevelType GuardLevel = 4;
+  optional uint64 RoomID = 3;  // available at msg
+  uint64 TimeStamp = 4;  // MilliTimestamp
+  map<int32, uint64> Trace = 5;  // MilliTimestamp, available at msg
 }
 
 enum GuardLevelType {
@@ -77,6 +78,9 @@ enum GuardLevelType {
 message FansMedalMeta {
   uint64 RoomUID = 1;  // target user id
   string Name = 2;
+  uint32 level = 3;
+  bool Light = 4;
+  GuardLevelType GuardLevel = 5;
 }
 
 // bind to request agent.userInfoMeta
@@ -93,7 +97,7 @@ message Damaku {
   BasicMsgMeta Meta = 1;
   uint64 UID = 2;
   string Content = 3;
-  FansMedal Medal = 4;
+  uint64 Medal = 4;  // target user id
 }
 
 // bind to agent.gift
@@ -104,7 +108,7 @@ message Gift {
   uint32 Count = 4;
   GiftInfo Info = 5;
   GiftInfo OriginalInfo = 6;  // include blind gift
-  FansMedal Medal = 7;
+  uint64 Medal = 7;
 
   message GiftInfo {
     uint32 ID = 1;
@@ -135,7 +139,7 @@ message SuperChat {
   string Message = 4;
   string MessageTrans = 5;
   uint32 Price = 6;  // RMB, = battery / 10
-  FansMedal Medal = 7;
+  uint64 Medal = 7;
 }
 
 // bind to agent.online

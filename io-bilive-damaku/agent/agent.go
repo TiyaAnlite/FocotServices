@@ -8,25 +8,53 @@ import (
 	"github.com/FishZe/go-bili-chat/v2/events"
 	"github.com/TiyaAnlite/FocotServices/io-bilive-damaku/pb/agent"
 	"github.com/nats-io/nats.go"
+	"github.com/tidwall/gjson"
 	"google.golang.org/protobuf/proto"
 	"k8s.io/klog/v2"
 	"sync"
+	"sync/atomic"
 	"time"
+)
+
+var (
+	SupportedMsgTypes = []string{
+		events.CmdDanmuMsg,
+		events.CmdSendGift,
+		events.CmdGuardBuy,
+		events.CmdSuperChatMessage,
+		events.CmdOnlineRankCount,
+		events.CmdOnlineRankV2,
+	}
+	SupportedMsgTypesNames = map[string]string{
+		events.CmdDanmuMsg:         "Damaku",
+		events.CmdSendGift:         "Gift",
+		events.CmdGuardBuy:         "Guard",
+		events.CmdSuperChatMessage: "SuperChat",
+		events.CmdOnlineRankCount:  "OnlineRank",
+		events.CmdOnlineRankV2:     "OnlineRankV2",
+	}
 )
 
 type DamakuCenterAgent struct {
 	chatHandler   *biliChat.Handler
 	controlChan   chan *nats.Msg
-	eventChan     chan *events.BLiveEvent
+	eventChan     chan *BLiveEventHandlerMsg
+	eventCounter  map[string]*atomic.Uint32
 	watchingRooms sync.Map
 	metaBuilder   agent.MetaBuilder
+
+	// running channel
+	userMetaChan  chan *agent.UserInfoMeta
+	medalMetaChan chan *agent.FansMedalMeta
 }
 
 func (a *DamakuCenterAgent) Init() {
 	a.chatHandler = biliChat.GetNewHandler()
 	a.controlChan = make(chan *nats.Msg, 4)
-	a.eventChan = make(chan *events.BLiveEvent, 100)
+	a.eventChan = make(chan *BLiveEventHandlerMsg, 100)
 	a.metaBuilder = agent.NewMsgMetaBuilder(cfg.AgentId)
+	a.userMetaChan = make(chan *agent.UserInfoMeta, 32)
+	a.medalMetaChan = make(chan *agent.FansMedalMeta, 32)
 	registerPacket := &agent.AgentInfo{ID: cfg.AgentId, Type: agent.AgentInfo_RealTimeAgent}
 	registerData, err := proto.Marshal(registerPacket)
 	if err != nil {
@@ -83,18 +111,17 @@ initLoop:
 	// start
 	klog.Infof("agent initialized, UID: %d", biliChatClient.UID)
 	// all supported handler here
-	a.chatHandler.AddOption(0, &BLiveEventHandlerWrapper{Command: events.CmdDanmuMsg, EventChan: a.eventChan})
-	a.chatHandler.AddOption(0, &BLiveEventHandlerWrapper{Command: events.CmdSendGift, EventChan: a.eventChan})
-	a.chatHandler.AddOption(0, &BLiveEventHandlerWrapper{Command: events.CmdGuardBuy, EventChan: a.eventChan})
-	a.chatHandler.AddOption(0, &BLiveEventHandlerWrapper{Command: events.CmdSuperChatMessage, EventChan: a.eventChan})
-	a.chatHandler.AddOption(0, &BLiveEventHandlerWrapper{Command: events.CmdOnlineRankCount, EventChan: a.eventChan})
-	a.chatHandler.AddOption(0, &BLiveEventHandlerWrapper{Command: events.CmdOnlineRankV2, EventChan: a.eventChan})
+	for _, msgType := range SupportedMsgTypes {
+		a.eventCounter[msgType] = &atomic.Uint32{}
+		a.chatHandler.AddOption(0, &BLiveEventHandlerWrapper{Command: msgType, EventChan: a.eventChan, Counter: a.eventCounter[msgType]})
+	}
 	go a.controller()
 }
 
 // collect status and receive control action
 func (a *DamakuCenterAgent) controller() {
 	collectTicker := time.NewTimer(time.Second)
+	worker.Add(1)
 	for {
 		select {
 		case <-collectTicker.C:
@@ -108,6 +135,9 @@ func (a *DamakuCenterAgent) controller() {
 				status.Watching = append(status.Watching, uKey)
 				return true
 			})
+			for k, counter := range a.eventCounter {
+				status.BufferEventCount[SupportedMsgTypesNames[k]] = counter.Load()
+			}
 			statusData, err := proto.Marshal(status)
 			if err != nil {
 				klog.Errorf("failed to marshal status data: %s", err.Error())
@@ -143,11 +173,78 @@ func (a *DamakuCenterAgent) controller() {
 					klog.Errorf("response control msg failed: %s", err.Error())
 				}
 			}
+		case <-ctx.Done():
+			klog.Infof("agent controller stopped")
+			worker.Done()
+			return
 		}
 	}
 }
 
 // can be parallelization
 func (a *DamakuCenterAgent) eventHandler() {
+	worker.Add(1)
+	for {
+		select {
+		case msg := <-a.eventChan:
+			msg.processTime = time.Now()
+			roomId := uint64(msg.event.RoomId)
+			switch msg.event.Cmd {
+			case events.CmdDanmuMsg:
+				// init
+				userMeta := &agent.UserInfoMeta{}
+				meta := a.metaBuilder()
+				meta.RoomID = &roomId
+				// parse
+				data := gjson.ParseBytes(msg.event.RawMessage)
+				meta.TimeStamp = data.Get("info.0.4").Uint()
+				userMeta.UID = data.Get("info.2.0").Uint()
+				userMeta.UserName = data.Get("info.2.1").String()
+				userFace := data.Get("info.0.15.user.base.face").String()
+				userMeta.Face = &userFace
+				a.userMetaChan <- userMeta
+				medal := &agent.FansMedalMeta{
+					RoomUID:    data.Get("info.3.12").Uint(),
+					Name:       data.Get("info.3.1").String(),
+					Level:      uint32(data.Get("info.3.0").Uint()),
+					Light:      data.Get("info.3.11").Bool(),
+					GuardLevel: agent.GuardLevelType(data.Get("info.3.10").Uint()),
+				}
+				a.medalMetaChan <- medal
+				danmaku := &agent.Damaku{
+					Meta:    meta,
+					UID:     userMeta.UID,
+					Content: data.Get("info.1").String(),
+					Medal:   medal.RoomUID,
+				}
+				// trace
+				danmaku.Meta.Trace[int32(agent.TraceStep_Wait)] = uint64(msg.processTime.Sub(msg.startTime).Milliseconds())
+				danmaku.Meta.Trace[int32(agent.TraceStep_Process)] = uint64(time.Now().Sub(msg.processTime).Milliseconds())
+				sendData, err := proto.Marshal(danmaku)
+				if err != nil {
+					klog.Errorf("failed to marshal danmaku: %s", err.Error())
+				}
+				if err := mq.Publish(fmt.Sprintf("%s.agent.danmaku", cfg.SubjectPrefix), sendData); err != nil {
+					klog.Errorf("publish danmaku message failed: %s", err.Error())
+				}
+			case events.CmdSendGift:
+			case events.CmdGuardBuy:
+			case events.CmdSuperChatMessage:
+			case events.CmdOnlineRankCount:
+			case events.CmdOnlineRankV2:
+			default:
+				klog.Warningf("unsupported command: %s", msg.event.Cmd)
+				continue
+			}
+		case <-ctx.Done():
+			klog.Infof("agent event handler stopped")
+			worker.Done()
+			return
+		}
+	}
+}
+
+// update & sync user/medal meta cache
+func (a *DamakuCenterAgent) metaIndexer(meta *agent.UserInfoMeta) {
 
 }
