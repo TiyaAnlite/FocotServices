@@ -1,16 +1,22 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	biliChat "github.com/FishZe/go-bili-chat/v2"
 	biliChatClient "github.com/FishZe/go-bili-chat/v2/client"
 	"github.com/FishZe/go-bili-chat/v2/events"
 	"github.com/TiyaAnlite/FocotServices/io-bilive-damaku/pb/agent"
+	"github.com/allegro/bigcache/v3"
+	"github.com/duke-git/lancet/v2/compare"
+	"github.com/duke-git/lancet/v2/pointer"
 	"github.com/nats-io/nats.go"
 	"github.com/tidwall/gjson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"k8s.io/klog/v2"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,28 +39,56 @@ var (
 		events.CmdOnlineRankCount:  "OnlineRank",
 		events.CmdOnlineRankV2:     "OnlineRankV2",
 	}
+	SupportedMsgTypesProto = map[string]agent.AgentStatusBufferType{
+		events.CmdDanmuMsg:         agent.AgentStatus_Damaku,
+		events.CmdSendGift:         agent.AgentStatus_Gift,
+		events.CmdGuardBuy:         agent.AgentStatus_Guard,
+		events.CmdSuperChatMessage: agent.AgentStatus_SuperChat,
+		events.CmdOnlineRankCount:  agent.AgentStatus_OnlineRank,
+		events.CmdOnlineRankV2:     agent.AgentStatus_OnlineRankV2,
+	}
+	CacheConfig = bigcache.Config{
+		Shards:           1024,
+		LifeWindow:       time.Minute * 30,
+		CleanWindow:      time.Hour,
+		MaxEntrySize:     500,
+		HardMaxCacheSize: 0,
+	}
 )
 
 type DamakuCenterAgent struct {
 	chatHandler   *biliChat.Handler
 	controlChan   chan *nats.Msg
 	eventChan     chan *BLiveEventHandlerMsg
-	eventCounter  map[string]*atomic.Uint32
+	eventCounter  map[string]*atomic.Int32
 	watchingRooms sync.Map
 	metaBuilder   agent.MetaBuilder
 
-	// running channel
+	// runtime channel
 	userMetaChan  chan *agent.UserInfoMeta
 	medalMetaChan chan *agent.FansMedalMeta
+
+	// runtime cache
+	userMetaCache  *bigcache.BigCache
+	medalMetaCache *bigcache.BigCache
 }
 
 func (a *DamakuCenterAgent) Init() {
+	var err error
 	a.chatHandler = biliChat.GetNewHandler()
 	a.controlChan = make(chan *nats.Msg, 4)
 	a.eventChan = make(chan *BLiveEventHandlerMsg, 100)
 	a.metaBuilder = agent.NewMsgMetaBuilder(cfg.AgentId)
 	a.userMetaChan = make(chan *agent.UserInfoMeta, 32)
 	a.medalMetaChan = make(chan *agent.FansMedalMeta, 32)
+	a.userMetaCache, err = bigcache.New(ctx, CacheConfig)
+	if err != nil {
+		klog.Fatalf("init cache failed: %s", err.Error())
+	}
+	a.medalMetaCache, err = bigcache.New(ctx, CacheConfig)
+	if err != nil {
+		klog.Fatalf("init cache failed: %s", err.Error())
+	}
 	registerPacket := &agent.AgentInfo{ID: cfg.AgentId, Type: agent.AgentInfo_RealTimeAgent}
 	registerData, err := proto.Marshal(registerPacket)
 	if err != nil {
@@ -112,10 +146,12 @@ initLoop:
 	klog.Infof("agent initialized, UID: %d", biliChatClient.UID)
 	// all supported handler here
 	for _, msgType := range SupportedMsgTypes {
-		a.eventCounter[msgType] = &atomic.Uint32{}
+		a.eventCounter[msgType] = &atomic.Int32{}
 		a.chatHandler.AddOption(0, &BLiveEventHandlerWrapper{Command: msgType, EventChan: a.eventChan, Counter: a.eventCounter[msgType]})
 	}
 	go a.controller()
+	go a.eventHandler()
+	go a.metaIndexer()
 }
 
 // collect status and receive control action
@@ -136,7 +172,7 @@ func (a *DamakuCenterAgent) controller() {
 				return true
 			})
 			for k, counter := range a.eventCounter {
-				status.BufferEventCount[SupportedMsgTypesNames[k]] = counter.Load()
+				status.BufferEventCount[int32(SupportedMsgTypesProto[k])] = counter.Load()
 			}
 			statusData, err := proto.Marshal(status)
 			if err != nil {
@@ -187,6 +223,7 @@ func (a *DamakuCenterAgent) eventHandler() {
 	for {
 		select {
 		case msg := <-a.eventChan:
+			a.eventCounter[msg.event.Cmd].Add(-1) // counter
 			msg.processTime = time.Now()
 			roomId := uint64(msg.event.RoomId)
 			switch msg.event.Cmd {
@@ -204,6 +241,7 @@ func (a *DamakuCenterAgent) eventHandler() {
 				userMeta.Face = &userFace
 				a.userMetaChan <- userMeta
 				medal := &agent.FansMedalMeta{
+					UID:        userMeta.UID,
 					RoomUID:    data.Get("info.3.12").Uint(),
 					Name:       data.Get("info.3.1").String(),
 					Level:      uint32(data.Get("info.3.0").Uint()),
@@ -218,11 +256,12 @@ func (a *DamakuCenterAgent) eventHandler() {
 					Medal:   medal.RoomUID,
 				}
 				// trace
-				danmaku.Meta.Trace[int32(agent.TraceStep_Wait)] = uint64(msg.processTime.Sub(msg.startTime).Milliseconds())
-				danmaku.Meta.Trace[int32(agent.TraceStep_Process)] = uint64(time.Now().Sub(msg.processTime).Milliseconds())
+				danmaku.Meta.Trace[int32(agent.BasicMsgMeta_Wait)] = uint64(msg.processTime.Sub(msg.startTime).Milliseconds())
+				danmaku.Meta.Trace[int32(agent.BasicMsgMeta_Process)] = uint64(time.Now().Sub(msg.processTime).Milliseconds())
 				sendData, err := proto.Marshal(danmaku)
 				if err != nil {
 					klog.Errorf("failed to marshal danmaku: %s", err.Error())
+					continue
 				}
 				if err := mq.Publish(fmt.Sprintf("%s.agent.danmaku", cfg.SubjectPrefix), sendData); err != nil {
 					klog.Errorf("publish danmaku message failed: %s", err.Error())
@@ -245,6 +284,88 @@ func (a *DamakuCenterAgent) eventHandler() {
 }
 
 // update & sync user/medal meta cache
-func (a *DamakuCenterAgent) metaIndexer(meta *agent.UserInfoMeta) {
-
+func (a *DamakuCenterAgent) metaIndexer() {
+	worker.Add(1)
+	syncMeta := func(cacheKey, syncSubject string, meta protoreflect.ProtoMessage) {
+		// update cache & sync
+		data, err := proto.Marshal(meta)
+		if err != nil {
+			klog.Errorf("failed to marshal meta data: %s", err.Error())
+			return
+		}
+		if msg, err := mq.Request(fmt.Sprintf("%s.agent.%s", cfg.SubjectPrefix, syncSubject), data, time.Second); err != nil {
+			klog.Errorf("publish user info meta message failed: %s", err.Error())
+			return
+		} else {
+			var resp agent.AgentControlResponse
+			if err := json.Unmarshal(msg.Data, &resp); err != nil {
+				klog.Errorf("failed to unmarshal response data: %s", err.Error())
+				return
+			}
+			if resp.Status != agent.AgentControlResponse_OK {
+				klog.Errorf("sync meta error: %s, status: %d", pointer.UnwarpOrDefault(resp.Error), resp.Status)
+				return
+			}
+		}
+		if err := a.userMetaCache.Set(cacheKey, data); err != nil {
+			klog.Errorf("failed to cache user meta: %s", err.Error())
+			return
+		}
+	}
+	for {
+		select {
+		case meta := <-a.userMetaChan:
+			// checking cache
+			cached, err := a.userMetaCache.Get(strconv.FormatUint(meta.UID, 10))
+			if err != nil {
+				if errors.Is(err, bigcache.ErrEntryNotFound) {
+					// no cache sync
+					syncMeta(strconv.FormatUint(meta.UID, 10), "userInfoMeta", meta)
+					continue
+				}
+				klog.Errorf("failed to get cached user meta: %s", err.Error())
+				continue
+			}
+			var cachedMeta agent.UserInfoMeta
+			if err := proto.Unmarshal(cached, &cachedMeta); err != nil {
+				klog.Errorf("failed to unmarshal cached user meta: %s", err.Error())
+				continue
+			}
+			if compare.Equal(meta.UserName, cachedMeta.UserName) &&
+				compare.Equal(meta.Face, cachedMeta.Face) &&
+				compare.Equal(meta.Level, cachedMeta.Level) &&
+				compare.Equal(meta.WealthLevel, cachedMeta.WealthLevel) {
+				continue
+			}
+			// update sync
+			syncMeta(strconv.FormatUint(meta.UID, 10), "userInfoMeta", meta)
+		case meta := <-a.medalMetaChan:
+			cached, err := a.userMetaCache.Get(strconv.FormatUint(meta.UID, 10))
+			if err != nil {
+				if errors.Is(err, bigcache.ErrEntryNotFound) {
+					syncMeta(strconv.FormatUint(meta.UID, 10), "fansMedal", meta)
+					continue
+				}
+				klog.Errorf("failed to get cached user meta: %s", err.Error())
+				continue
+			}
+			var cachedMeta agent.FansMedalMeta
+			if err := proto.Unmarshal(cached, &cachedMeta); err != nil {
+				klog.Errorf("failed to unmarshal cached user meta: %s", err.Error())
+				continue
+			}
+			if compare.Equal(meta.RoomUID, cachedMeta.RoomUID) &&
+				compare.Equal(meta.Name, cachedMeta.Name) &&
+				compare.Equal(meta.Level, cachedMeta.Level) &&
+				compare.Equal(meta.Light, cachedMeta.Light) &&
+				compare.Equal(meta.GuardLevel, cachedMeta.GuardLevel) {
+				continue
+			}
+			syncMeta(strconv.FormatUint(meta.UID, 10), "fansMedal", meta)
+		case <-ctx.Done():
+			klog.Infof("meta indexer stopped")
+			worker.Done()
+			return
+		}
+	}
 }

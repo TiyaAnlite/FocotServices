@@ -10,7 +10,7 @@ import (
 type BLiveEventHandlerWrapper struct {
 	Command   string `json:"cmd"`
 	EventChan chan<- *BLiveEventHandlerMsg
-	Counter   *atomic.Uint32
+	Counter   *atomic.Int32
 }
 
 func (h *BLiveEventHandlerWrapper) Cmd() string {
