@@ -50,15 +50,29 @@ message AgentAction {
 message AgentStatus {
   BasicMsgMeta Meta = 1;
   repeated uint64 Watching = 2;
-  uint32 bufferUsed = 3;
-  map<int32, int32> bufferEventCount = 4;  // bufferType:count
-  enum bufferType{
+  uint32 BufferUsed = 3;
+  map<int32, int32> BufferEventCount = 4;  // BufferType:count
+  map<int32, MetaCacheInfo> MetaCache = 5;  // MetaCacheType:MetaCacheInfo
+  enum BufferType{
     Damaku = 0;
     Gift = 1;
     Guard = 2;
     SuperChat = 3;
     OnlineRank = 4;
     OnlineRankV2 = 5;
+  }
+  enum MetaCacheType {
+    User = 0;
+    Medal = 1;
+  }
+  message MetaCacheInfo {
+    uint32 Buffer = 1;  // meta indexer queue
+    uint32 Cached = 2;
+    int64 Hits = 3;
+    int64 Misses = 4;
+    int64 DelHits = 5;
+    int64 DelMisses = 6;
+    int64 Collisions = 7;
   }
 }
 
@@ -74,7 +88,7 @@ message FansMedalMeta {
   uint64 UID = 1;
   uint64 RoomUID = 2;  // target user id
   string Name = 3;
-  uint32 level = 4;
+  uint32 Level = 4;
   bool Light = 5;
   GuardLevelType GuardLevel = 6;
 }
@@ -93,7 +107,7 @@ message BasicMsgMeta {
   string Agent = 2;  // AgentID
   optional uint64 RoomID = 3;  // available at msg
   uint64 TimeStamp = 4;  // MilliTimestamp
-  map<int32, uint64> Trace = 5;  // TraceStep:MilliTimestamp, available at msg
+  map<int32, uint64> Trace = 5;  // TraceStep:Microseconds, available at msg
   enum TraceStep {
     Wait = 0;
     Process = 1;
@@ -115,7 +129,7 @@ message Gift {
   uint64 UID = 3;
   uint32 Count = 4;
   GiftInfo Info = 5;
-  GiftInfo OriginalInfo = 6;  // include blind gift
+  GiftInfo OriginalInfo = 6;  // include blind gift, or same as info
   uint64 Medal = 7;
 
   message GiftInfo {
@@ -140,6 +154,7 @@ message Guard {
   }
 }
 
+// bind to agent.superChat
 message SuperChat {
   BasicMsgMeta Meta = 1;
   uint64 ID = 2;  // sc id

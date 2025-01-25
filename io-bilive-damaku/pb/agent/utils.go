@@ -37,6 +37,7 @@ func NewMsgMetaBuilder(agentId string) MetaBuilder {
 			Version:   VERSION,
 			Agent:     agentId,
 			TimeStamp: uint64(time.Now().UnixMilli()),
+			Trace:     make(map[int32]uint64),
 		}
 	}
 }

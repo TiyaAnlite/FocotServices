@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	biliChat "github.com/FishZe/go-bili-chat/v2"
@@ -9,7 +8,9 @@ import (
 	"github.com/FishZe/go-bili-chat/v2/events"
 	"github.com/TiyaAnlite/FocotServices/io-bilive-damaku/pb/agent"
 	"github.com/allegro/bigcache/v3"
+	"github.com/bytedance/sonic"
 	"github.com/duke-git/lancet/v2/compare"
+	"github.com/duke-git/lancet/v2/condition"
 	"github.com/duke-git/lancet/v2/pointer"
 	"github.com/nats-io/nats.go"
 	"github.com/tidwall/gjson"
@@ -39,7 +40,7 @@ var (
 		events.CmdOnlineRankCount:  "OnlineRank",
 		events.CmdOnlineRankV2:     "OnlineRankV2",
 	}
-	SupportedMsgTypesProto = map[string]agent.AgentStatusBufferType{
+	SupportedMsgTypesProto = map[string]agent.AgentStatus_BufferType{
 		events.CmdDanmuMsg:         agent.AgentStatus_Damaku,
 		events.CmdSendGift:         agent.AgentStatus_Gift,
 		events.CmdGuardBuy:         agent.AgentStatus_Guard,
@@ -78,6 +79,7 @@ func (a *DamakuCenterAgent) Init() {
 	a.chatHandler = biliChat.GetNewHandler()
 	a.controlChan = make(chan *nats.Msg, 4)
 	a.eventChan = make(chan *BLiveEventHandlerMsg, 100)
+	a.eventCounter = make(map[string]*atomic.Int32)
 	a.metaBuilder = agent.NewMsgMetaBuilder(cfg.AgentId)
 	a.userMetaChan = make(chan *agent.UserInfoMeta, 32)
 	a.medalMetaChan = make(chan *agent.FansMedalMeta, 32)
@@ -100,7 +102,7 @@ func (a *DamakuCenterAgent) Init() {
 	if err != nil {
 		klog.Fatalf("subscribe init subject failed: %s", err.Error())
 	}
-	ticker := time.NewTicker(time.Second * 10)
+	ticker := time.NewTicker(time.Second * 3)
 initLoop:
 	for {
 		select {
@@ -119,12 +121,12 @@ initLoop:
 			biliChat.SetBuvid(regMsg.BUVID)
 			biliChat.SetUID(int64(regMsg.UID))
 			if regMsg.UA != nil {
-				biliChat.SetHeaderUA(*regMsg.UA)
+				biliChat.SetHeaderUA(regMsg.GetUA())
 			}
 			if regMsg.PriorityMode != nil {
-				biliChat.SetClientPriorityMode(int(*regMsg.PriorityMode))
+				biliChat.SetClientPriorityMode(int(regMsg.GetPriorityMode()))
 			}
-			for k, v := range regMsg.Header {
+			for k, v := range regMsg.GetHeader() {
 				biliChatClient.Header.Set(k, v)
 			}
 			controlSub, err := mq.Nc.ChanSubscribe(fmt.Sprintf("%s.agent.%s.action", cfg.SubjectPrefix, cfg.AgentId), a.controlChan)
@@ -144,6 +146,7 @@ initLoop:
 	}
 	// start
 	klog.Infof("agent initialized, UID: %d", biliChatClient.UID)
+	go a.chatHandler.Run()
 	// all supported handler here
 	for _, msgType := range SupportedMsgTypes {
 		a.eventCounter[msgType] = &atomic.Int32{}
@@ -156,12 +159,19 @@ initLoop:
 
 // collect status and receive control action
 func (a *DamakuCenterAgent) controller() {
-	collectTicker := time.NewTimer(time.Second)
+	collectTicker := time.NewTicker(time.Second)
 	worker.Add(1)
+	klog.Info("controller started")
 	for {
 		select {
 		case <-collectTicker.C:
-			status := &agent.AgentStatus{Meta: a.metaBuilder(), BufferUsed: uint32(len(a.eventChan))}
+			status := &agent.AgentStatus{
+				Meta:             a.metaBuilder(),
+				BufferUsed:       uint32(len(a.eventChan)),
+				BufferEventCount: make(map[int32]int32),
+				MetaCache:        make(map[int32]*agent.AgentStatus_MetaCacheInfo),
+			}
+			a.userMetaCache.Len()
 			a.watchingRooms.Range(func(key, _ any) bool {
 				uKey, ok := key.(uint64)
 				if !ok {
@@ -174,11 +184,31 @@ func (a *DamakuCenterAgent) controller() {
 			for k, counter := range a.eventCounter {
 				status.BufferEventCount[int32(SupportedMsgTypesProto[k])] = counter.Load()
 			}
+			userCacheStatus := a.userMetaCache.Stats()
+			medalCacheStatus := a.medalMetaCache.Stats()
+			status.MetaCache[int32(agent.AgentStatus_User)] = &agent.AgentStatus_MetaCacheInfo{
+				Buffer:     uint32(len(a.userMetaChan)),
+				Cached:     uint32(a.userMetaCache.Len()),
+				Hits:       userCacheStatus.Hits,
+				Misses:     userCacheStatus.Misses,
+				DelHits:    userCacheStatus.DelHits,
+				DelMisses:  userCacheStatus.DelMisses,
+				Collisions: userCacheStatus.Collisions,
+			}
+			status.MetaCache[int32(agent.AgentStatus_Medal)] = &agent.AgentStatus_MetaCacheInfo{
+				Buffer:     uint32(len(a.medalMetaChan)),
+				Cached:     uint32(a.medalMetaCache.Len()),
+				Hits:       medalCacheStatus.Hits,
+				Misses:     medalCacheStatus.Misses,
+				DelHits:    medalCacheStatus.DelHits,
+				DelMisses:  medalCacheStatus.DelMisses,
+				Collisions: medalCacheStatus.Collisions,
+			}
 			statusData, err := proto.Marshal(status)
 			if err != nil {
 				klog.Errorf("failed to marshal status data: %s", err.Error())
 			}
-			if err := mq.Publish("%s.agent.status", statusData); err != nil {
+			if err := mq.Publish(fmt.Sprintf("%s.agent.status", cfg.SubjectPrefix), statusData); err != nil {
 				klog.Errorf("publish status msg failed: %s", err.Error())
 			}
 		case controlMsg := <-a.controlChan:
@@ -194,10 +224,11 @@ func (a *DamakuCenterAgent) controller() {
 						klog.Errorf("response control msg failed: %s", err.Error())
 					}
 				}
-				if *action.RoomID < 10000 {
-					klog.Errorf("unsupported room id: %d", *action.RoomID)
-					_ = agent.ControlError(controlMsg, fmt.Errorf("unsupported room id: %d", *action.RoomID))
-				}
+				//if *action.RoomID < 10000 {
+				//	klog.Errorf("unsupported room id: %d", *action.RoomID)
+				//	_ = agent.ControlError(controlMsg, fmt.Errorf("unsupported room id: %d", *action.RoomID))
+				//}
+				klog.V(3).Infof("action: %s %d", agent.AgentAction_AgentActionType_name[int32(action.Type)], action.RoomID)
 				if action.Type == agent.AgentAction_AddRoom {
 					_ = a.chatHandler.AddRoom(int(*action.RoomID))
 					a.watchingRooms.Store(*action.RoomID, struct{}{})
@@ -220,6 +251,7 @@ func (a *DamakuCenterAgent) controller() {
 // can be parallelization
 func (a *DamakuCenterAgent) eventHandler() {
 	worker.Add(1)
+	klog.Info("event handler started")
 	for {
 		select {
 		case msg := <-a.eventChan:
@@ -237,9 +269,11 @@ func (a *DamakuCenterAgent) eventHandler() {
 				meta.TimeStamp = data.Get("info.0.4").Uint()
 				userMeta.UID = data.Get("info.2.0").Uint()
 				userMeta.UserName = data.Get("info.2.1").String()
-				userFace := data.Get("info.0.15.user.base.face").String()
-				userMeta.Face = &userFace
+				if userFace := data.Get("info.0.15.user.base.face").String(); userFace != "" {
+					userMeta.Face = &userFace
+				}
 				a.userMetaChan <- userMeta
+
 				medal := &agent.FansMedalMeta{
 					UID:        userMeta.UID,
 					RoomUID:    data.Get("info.3.12").Uint(),
@@ -249,6 +283,7 @@ func (a *DamakuCenterAgent) eventHandler() {
 					GuardLevel: agent.GuardLevelType(data.Get("info.3.10").Uint()),
 				}
 				a.medalMetaChan <- medal
+
 				danmaku := &agent.Damaku{
 					Meta:    meta,
 					UID:     userMeta.UID,
@@ -256,21 +291,244 @@ func (a *DamakuCenterAgent) eventHandler() {
 					Medal:   medal.RoomUID,
 				}
 				// trace
-				danmaku.Meta.Trace[int32(agent.BasicMsgMeta_Wait)] = uint64(msg.processTime.Sub(msg.startTime).Milliseconds())
-				danmaku.Meta.Trace[int32(agent.BasicMsgMeta_Process)] = uint64(time.Now().Sub(msg.processTime).Milliseconds())
+				danmaku.Meta.Trace[int32(agent.BasicMsgMeta_Wait)] = uint64(msg.processTime.Sub(msg.startTime).Microseconds())
+				danmaku.Meta.Trace[int32(agent.BasicMsgMeta_Process)] = uint64(time.Now().Sub(msg.processTime).Microseconds())
 				sendData, err := proto.Marshal(danmaku)
 				if err != nil {
 					klog.Errorf("failed to marshal danmaku: %s", err.Error())
 					continue
 				}
-				if err := mq.Publish(fmt.Sprintf("%s.agent.danmaku", cfg.SubjectPrefix), sendData); err != nil {
+				if err := mq.Publish(fmt.Sprintf("%s.agent.damaku", cfg.SubjectPrefix), sendData); err != nil {
 					klog.Errorf("publish danmaku message failed: %s", err.Error())
 				}
+				klog.V(5).Infof("danmaku push")
 			case events.CmdSendGift:
+				var giftData events.SendGift
+				var extraGiftData ExtraSendGiftEvent
+				if err := sonic.Unmarshal(msg.event.RawMessage, &giftData); err != nil {
+					klog.Errorf("failed to unmarshal gift data: %s", err.Error())
+					continue
+				}
+				if err := sonic.Unmarshal(msg.event.RawMessage, &extraGiftData); err != nil {
+					klog.Errorf("failed to unmarshal extra gift data: %s", err.Error())
+					continue
+				}
+				userMeta := &agent.UserInfoMeta{
+					UID:      uint64(giftData.Data.UID),
+					UserName: giftData.Data.Name,
+				}
+				if giftData.Data.Face != "" {
+					userMeta.Face = &giftData.Data.Face
+				}
+				if extraGiftData.Data.WealthLevel != 0 {
+					userMeta.WealthLevel = &extraGiftData.Data.WealthLevel
+				}
+				a.userMetaChan <- userMeta
+
+				medal := &agent.FansMedalMeta{
+					UID: userMeta.UID,
+				}
+				if giftData.Data.FansMedal != nil {
+					medal.RoomUID = uint64(giftData.Data.FansMedal.TargetId)
+					medal.Name = giftData.Data.FansMedal.MedalName
+					medal.Level = uint32(giftData.Data.FansMedal.MedalLevel)
+					medal.Light = condition.TernaryOperator(giftData.Data.FansMedal.IsLighted, true, false)
+					medal.GuardLevel = agent.GuardLevelType(giftData.Data.FansMedal.GuardLevel)
+				}
+				a.medalMetaChan <- medal
+
+				gift := &agent.Gift{
+					Meta:  a.metaBuilder(),
+					UID:   userMeta.UID,
+					Count: uint32(giftData.Data.Num),
+					Medal: medal.RoomUID,
+				}
+				gift.Meta.RoomID = &roomId
+				gift.Meta.TimeStamp = uint64(giftData.Data.Timestamp * 1000)
+				giftId, err := strconv.ParseInt(giftData.Data.Tid, 10, 64)
+				if err != nil {
+					klog.Errorf("failed to parse gift id(%s): %s", giftData.Data.Rnd, err.Error())
+					continue
+				}
+				gift.TID = uint64(giftId)
+				gift.Info = &agent.Gift_GiftInfo{
+					ID:    uint32(giftData.Data.GiftID),
+					Name:  giftData.Data.GiftName,
+					Price: uint32(giftData.Data.Price),
+				}
+				if giftData.Data.BlindGift != nil {
+					gift.OriginalInfo = &agent.Gift_GiftInfo{
+						ID:    uint32(giftData.Data.BlindGift.OriginalGiftId),
+						Name:  giftData.Data.BlindGift.OriginalGiftName,
+						Price: uint32(giftData.Data.BlindGift.OriginalGiftPrice),
+					}
+				} else {
+					gift.OriginalInfo = gift.Info
+				}
+				// trace
+				gift.Meta.Trace[int32(agent.BasicMsgMeta_Wait)] = uint64(msg.processTime.Sub(msg.startTime).Microseconds())
+				gift.Meta.Trace[int32(agent.BasicMsgMeta_Process)] = uint64(time.Now().Sub(msg.processTime).Microseconds())
+				sendData, err := proto.Marshal(gift)
+				if err != nil {
+					klog.Errorf("failed to marshal gift: %s", err.Error())
+					continue
+				}
+				if err := mq.Publish(fmt.Sprintf("%s.agent.gift", cfg.SubjectPrefix), sendData); err != nil {
+					klog.Errorf("publish gift message failed: %s", err.Error())
+				}
+				klog.V(5).Infof("gift push")
 			case events.CmdGuardBuy:
+				var guardData events.GuardBuyMsg
+				if err := sonic.Unmarshal(msg.event.RawMessage, &guardData); err != nil {
+					klog.Errorf("failed to unmarshal gift data: %s", err.Error())
+					continue
+				}
+				userMeta := &agent.UserInfoMeta{
+					UID:      uint64(guardData.Data.UID),
+					UserName: guardData.Data.Username,
+				}
+				a.userMetaChan <- userMeta
+
+				guard := &agent.Guard{
+					Meta:     a.metaBuilder(),
+					UID:      userMeta.UID,
+					Price:    uint32(guardData.Data.Price),
+					GiftType: agent.Guard_GuardGiftType(guardData.Data.GiftID),
+				}
+				guard.Meta.RoomID = &roomId
+				guard.Meta.TimeStamp = uint64(guardData.Data.StartTime * 1000)
+				// trace
+				guard.Meta.Trace[int32(agent.BasicMsgMeta_Wait)] = uint64(msg.processTime.Sub(msg.startTime).Microseconds())
+				guard.Meta.Trace[int32(agent.BasicMsgMeta_Process)] = uint64(time.Now().Sub(msg.processTime).Microseconds())
+				sendData, err := proto.Marshal(guard)
+				if err != nil {
+					klog.Errorf("failed to marshal guard: %s", err.Error())
+					continue
+				}
+				if err := mq.Publish(fmt.Sprintf("%s.agent.guard", cfg.SubjectPrefix), sendData); err != nil {
+					klog.Errorf("publish guard message failed: %s", err.Error())
+				}
+				klog.V(5).Infof("guard push")
 			case events.CmdSuperChatMessage:
+				var scData events.SuperChatMessage
+				if err := sonic.Unmarshal(msg.event.RawMessage, &scData); err != nil {
+					klog.Errorf("failed to unmarshal superchat data: %s", err.Error())
+					continue
+				}
+				userMeta := &agent.UserInfoMeta{
+					UID:      uint64(scData.Data.Uid),
+					UserName: scData.Data.UInfo.Base.Name,
+					Face:     &scData.Data.UInfo.Base.Face,
+				}
+				uLevel := uint32(scData.Data.UserInfo.UserLevel)
+				userMeta.Level = &uLevel
+				a.userMetaChan <- userMeta
+
+				medal := &agent.FansMedalMeta{
+					UID: userMeta.UID,
+				}
+				if scData.Data.UInfo.Medal.Ruid != 0 {
+					medal.RoomUID = uint64(scData.Data.UInfo.Medal.Ruid)
+					medal.Name = scData.Data.UInfo.Medal.Name
+					medal.Level = uint32(scData.Data.UInfo.Medal.Level)
+					medal.Light = condition.TernaryOperator(scData.Data.UInfo.Medal.IsLight, true, false)
+					medal.GuardLevel = agent.GuardLevelType(uLevel)
+				}
+				a.medalMetaChan <- medal
+
+				sc := &agent.SuperChat{
+					Meta:         a.metaBuilder(),
+					ID:           uint64(scData.Data.Id),
+					UID:          userMeta.UID,
+					Message:      scData.Data.Message,
+					MessageTrans: scData.Data.MessageTrans,
+					Price:        uint32(scData.Data.Price),
+					Medal:        medal.RoomUID,
+				}
+				sc.Meta.RoomID = &roomId
+				sc.Meta.TimeStamp = uint64(scData.Data.Ts)
+				// trace
+				sc.Meta.Trace[int32(agent.BasicMsgMeta_Wait)] = uint64(msg.processTime.Sub(msg.startTime).Microseconds())
+				sc.Meta.Trace[int32(agent.BasicMsgMeta_Process)] = uint64(time.Now().Sub(msg.processTime).Microseconds())
+				sendData, err := proto.Marshal(sc)
+				if err != nil {
+					klog.Errorf("failed to marshal superChat: %s", err.Error())
+					continue
+				}
+				if err := mq.Publish(fmt.Sprintf("%s.agent.superChat", cfg.SubjectPrefix), sendData); err != nil {
+					klog.Errorf("publish superChat message failed: %s", err.Error())
+				}
+				klog.V(5).Infof("superChat push")
 			case events.CmdOnlineRankCount:
+				meta := a.metaBuilder()
+				var orData OnlineRankCount
+				if err := sonic.Unmarshal(msg.event.RawMessage, &orData); err != nil {
+					klog.Errorf("failed to unmarshal online rank count: %s", err.Error())
+					continue
+				}
+				or := &agent.OnlineRankCount{
+					Meta:   meta,
+					Count:  orData.Data.Count,
+					Online: orData.Data.Online,
+				}
+				or.Meta.RoomID = &roomId
+				// trace
+				or.Meta.Trace[int32(agent.BasicMsgMeta_Wait)] = uint64(msg.processTime.Sub(msg.startTime).Microseconds())
+				or.Meta.Trace[int32(agent.BasicMsgMeta_Process)] = uint64(time.Now().Sub(msg.processTime).Microseconds())
+				sendData, err := proto.Marshal(or)
+				if err != nil {
+					klog.Errorf("failed to marshal onlineRankCount: %s", err.Error())
+					continue
+				}
+				if err := mq.Publish(fmt.Sprintf("%s.agent.online", cfg.SubjectPrefix), sendData); err != nil {
+					klog.Errorf("publish onlineRankCount message failed: %s", err.Error())
+				}
+				klog.V(5).Infof("onlineRankCount push")
 			case events.CmdOnlineRankV2:
+				meta := a.metaBuilder()
+				var or2Data OnlineRankV2
+				if err := sonic.Unmarshal(msg.event.RawMessage, &or2Data); err != nil {
+					klog.Errorf("failed to unmarshal onlineRankV2: %s", err.Error())
+					continue
+				}
+				var rankList []*agent.OnlineRankV2_OnlineRankList
+				for _, rank := range or2Data.Data.OnlineList {
+					userMeta := &agent.UserInfoMeta{
+						UID:      uint64(rank.UID),
+						UserName: rank.Name,
+						Face:     &rank.Face,
+					}
+					a.userMetaChan <- userMeta
+
+					rankScore, err := strconv.ParseUint(rank.Score, 10, 32)
+					if err != nil {
+						klog.Errorf("failed to parse rank score: %s", err.Error())
+						continue
+					}
+					rankList = append(rankList, &agent.OnlineRankV2_OnlineRankList{
+						Rank:       uint32(rank.Rank),
+						Score:      uint32(rankScore),
+						UID:        userMeta.UID,
+						GuardLevel: agent.GuardLevelType(rank.GuardLevel),
+					})
+				}
+				or2 := &agent.OnlineRankV2{
+					Meta: meta,
+					List: rankList,
+				}
+				or2.Meta.RoomID = &roomId
+				// trace
+				or2.Meta.Trace[int32(agent.BasicMsgMeta_Wait)] = uint64(msg.processTime.Sub(msg.startTime).Microseconds())
+				or2.Meta.Trace[int32(agent.BasicMsgMeta_Process)] = uint64(time.Now().Sub(msg.processTime).Microseconds())
+				sendData, err := proto.Marshal(or2)
+				if err != nil {
+					klog.Errorf("failed to marshal onlineRankV2: %s", err.Error())
+					continue
+				}
+				if err := mq.Publish(fmt.Sprintf("%s.agent.onlineV2", cfg.SubjectPrefix), sendData); err != nil {
+					klog.Errorf("publish onlineRankV2 message failed: %s", err.Error())
+				}
+				klog.V(5).Infof("onlineRankV2 push")
 			default:
 				klog.Warningf("unsupported command: %s", msg.event.Cmd)
 				continue
@@ -286,7 +544,8 @@ func (a *DamakuCenterAgent) eventHandler() {
 // update & sync user/medal meta cache
 func (a *DamakuCenterAgent) metaIndexer() {
 	worker.Add(1)
-	syncMeta := func(cacheKey, syncSubject string, meta protoreflect.ProtoMessage) {
+	klog.Info("meta indexer started")
+	syncMeta := func(cache *bigcache.BigCache, cacheKey, syncSubject string, meta protoreflect.ProtoMessage) {
 		// update cache & sync
 		data, err := proto.Marshal(meta)
 		if err != nil {
@@ -298,7 +557,7 @@ func (a *DamakuCenterAgent) metaIndexer() {
 			return
 		} else {
 			var resp agent.AgentControlResponse
-			if err := json.Unmarshal(msg.Data, &resp); err != nil {
+			if err := proto.Unmarshal(msg.Data, &resp); err != nil {
 				klog.Errorf("failed to unmarshal response data: %s", err.Error())
 				return
 			}
@@ -307,8 +566,8 @@ func (a *DamakuCenterAgent) metaIndexer() {
 				return
 			}
 		}
-		if err := a.userMetaCache.Set(cacheKey, data); err != nil {
-			klog.Errorf("failed to cache user meta: %s", err.Error())
+		if err := cache.Set(cacheKey, data); err != nil {
+			klog.Errorf("failed to cache meta: %s", err.Error())
 			return
 		}
 	}
@@ -320,7 +579,7 @@ func (a *DamakuCenterAgent) metaIndexer() {
 			if err != nil {
 				if errors.Is(err, bigcache.ErrEntryNotFound) {
 					// no cache sync
-					syncMeta(strconv.FormatUint(meta.UID, 10), "userInfoMeta", meta)
+					syncMeta(a.userMetaCache, strconv.FormatUint(meta.UID, 10), "userInfoMeta", meta)
 					continue
 				}
 				klog.Errorf("failed to get cached user meta: %s", err.Error())
@@ -331,19 +590,29 @@ func (a *DamakuCenterAgent) metaIndexer() {
 				klog.Errorf("failed to unmarshal cached user meta: %s", err.Error())
 				continue
 			}
-			if compare.Equal(meta.UserName, cachedMeta.UserName) &&
+			if meta.UserName == cachedMeta.UserName &&
 				compare.Equal(meta.Face, cachedMeta.Face) &&
 				compare.Equal(meta.Level, cachedMeta.Level) &&
 				compare.Equal(meta.WealthLevel, cachedMeta.WealthLevel) {
 				continue
 			}
+			// diff compare
+			if meta.Face == nil && cachedMeta.Face != nil {
+				meta.Face = cachedMeta.Face
+			}
+			if meta.Level == nil && cachedMeta.Level != nil {
+				meta.Level = cachedMeta.Level
+			}
+			if meta.WealthLevel == nil && cachedMeta.WealthLevel != nil {
+				meta.WealthLevel = cachedMeta.WealthLevel
+			}
 			// update sync
-			syncMeta(strconv.FormatUint(meta.UID, 10), "userInfoMeta", meta)
+			syncMeta(a.userMetaCache, strconv.FormatUint(meta.UID, 10), "userInfoMeta", meta)
 		case meta := <-a.medalMetaChan:
-			cached, err := a.userMetaCache.Get(strconv.FormatUint(meta.UID, 10))
+			cached, err := a.medalMetaCache.Get(strconv.FormatUint(meta.UID, 10))
 			if err != nil {
 				if errors.Is(err, bigcache.ErrEntryNotFound) {
-					syncMeta(strconv.FormatUint(meta.UID, 10), "fansMedal", meta)
+					syncMeta(a.medalMetaCache, fmt.Sprintf("%d:%d", meta.UID, meta.RoomUID), "fansMedal", meta)
 					continue
 				}
 				klog.Errorf("failed to get cached user meta: %s", err.Error())
@@ -354,14 +623,15 @@ func (a *DamakuCenterAgent) metaIndexer() {
 				klog.Errorf("failed to unmarshal cached user meta: %s", err.Error())
 				continue
 			}
-			if compare.Equal(meta.RoomUID, cachedMeta.RoomUID) &&
-				compare.Equal(meta.Name, cachedMeta.Name) &&
-				compare.Equal(meta.Level, cachedMeta.Level) &&
-				compare.Equal(meta.Light, cachedMeta.Light) &&
-				compare.Equal(meta.GuardLevel, cachedMeta.GuardLevel) {
+			// FansMedalMeta is full update, not need to compare diff
+			if meta.RoomUID == cachedMeta.RoomUID &&
+				meta.Name == cachedMeta.Name &&
+				meta.Level == cachedMeta.Level &&
+				meta.Light == cachedMeta.Light &&
+				meta.GuardLevel == cachedMeta.GuardLevel {
 				continue
 			}
-			syncMeta(strconv.FormatUint(meta.UID, 10), "fansMedal", meta)
+			syncMeta(a.medalMetaCache, strconv.FormatUint(meta.UID, 10), "fansMedal", meta)
 		case <-ctx.Done():
 			klog.Infof("meta indexer stopped")
 			worker.Done()

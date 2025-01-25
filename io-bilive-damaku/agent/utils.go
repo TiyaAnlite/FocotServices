@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/FishZe/go-bili-chat/v2/events"
+	"k8s.io/klog/v2"
 	"sync/atomic"
 	"time"
 )
@@ -14,10 +15,12 @@ type BLiveEventHandlerWrapper struct {
 }
 
 func (h *BLiveEventHandlerWrapper) Cmd() string {
+	klog.V(5).Infof("BLiveEventHandlerWrapper Hook: cmd -> %s", h.Command)
 	return h.Command
 }
 
 func (h *BLiveEventHandlerWrapper) On(event *events.BLiveEvent) {
+	klog.V(5).Infof("New BliveEvent: %s", event.Cmd)
 	if h.Counter != nil {
 		h.Counter.Add(1)
 	}

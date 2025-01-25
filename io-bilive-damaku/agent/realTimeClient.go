@@ -9,6 +9,7 @@ import (
 	"github.com/TiyaAnlite/FocotServicesCommon/utils"
 	"k8s.io/klog/v2"
 	"sync"
+	"testing"
 )
 
 type config struct {
@@ -27,6 +28,7 @@ var (
 )
 
 func init() {
+	testing.Init()
 	klog.InitFlags(nil)
 	flag.Parse()
 	envx.MustLoadEnv(cfg)
@@ -37,8 +39,7 @@ func main() {
 	var cancel context.CancelFunc
 	ctx, cancel = context.WithCancel(context.Background())
 	if err := mq.Open(cfg.NatsConfig); err != nil {
-		klog.Errorf("Cannot connect to NATS: %s", err.Error())
-		return
+		klog.Fatalf("Cannot connect to NATS: %s", err.Error())
 	}
 	defer mq.Close()
 	klog.Infof("using subject prefix: %s", cfg.SubjectPrefix)
