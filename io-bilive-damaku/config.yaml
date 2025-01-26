@@ -1,0 +1,12 @@
+global:
+  buvid: ""
+  uid: 0
+  cookie: ""
+#  headers:
+#    key: value
+#  ua: ""
+provider:
+  - type: static
+    rooms: [""]
+  - type: api
+    path: /room
