@@ -11,6 +11,7 @@ import (
 
 type CenterContext struct {
 	Context  context.Context
+	Config   *Config
 	Worker   *sync.WaitGroup
 	Registry *prometheus.Registry
 	Echo     *echo.Echo

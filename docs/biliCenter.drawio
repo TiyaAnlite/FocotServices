@@ -1,4 +1,4 @@
-<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/26.0.4 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36" version="26.0.4" pages="2">
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/26.0.7 Chrome/128.0.6613.186 Electron/32.2.5 Safari/537.36" version="26.0.7" pages="2">
   <diagram name="Main" id="xT2EWyWm9MXj7rOukKl2">
     <mxGraphModel dx="819" dy="478" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
       <root>
@@ -125,7 +125,7 @@
     </mxGraphModel>
   </diagram>
   <diagram id="SKCQztCh2i1zQZCfUlJ1" name="io-blive-damaku">
-    <mxGraphModel dx="1195" dy="697" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" background="none" math="0" shadow="0">
+    <mxGraphModel dx="307" dy="276" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" background="none" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -255,10 +255,10 @@
         <mxCell id="V_1HUPMDP4IkT2V314-I-38" value="存储后端" style="shape=partialRectangle;whiteSpace=wrap;html=1;top=0;bottom=0;fillColor=none;fontSize=20;" parent="1" vertex="1">
           <mxGeometry x="960" y="500" width="200" height="60" as="geometry" />
         </mxCell>
-        <mxCell id="V_1HUPMDP4IkT2V314-I-39" value="Agent Controller&lt;div&gt;客户端控制器&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=20;" parent="1" vertex="1">
+        <mxCell id="V_1HUPMDP4IkT2V314-I-39" value="Agent&lt;div&gt;Manager&lt;div&gt;客户端控制器&lt;/div&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=20;" parent="1" vertex="1">
           <mxGeometry x="540" y="300" width="140" height="120" as="geometry" />
         </mxCell>
-        <mxCell id="V_1HUPMDP4IkT2V314-I-40" value="Damaku Parser&lt;div&gt;消息流处理器&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=20;" parent="1" vertex="1">
+        <mxCell id="V_1HUPMDP4IkT2V314-I-40" value="Msg&lt;div&gt;Processor&lt;br&gt;&lt;div&gt;消息流处理器&lt;/div&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=20;" parent="1" vertex="1">
           <mxGeometry x="687" y="150" width="140" height="120" as="geometry" />
         </mxCell>
         <mxCell id="V_1HUPMDP4IkT2V314-I-47" value="IOBliveRecorder&lt;div&gt;录播姬监视服务&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=15;" parent="1" vertex="1">
@@ -297,8 +297,8 @@
         <mxCell id="V_1HUPMDP4IkT2V314-I-57" value="LocalFile&lt;div&gt;Cache&lt;/div&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fontSize=20;" parent="1" vertex="1">
           <mxGeometry x="1050" y="370" width="100" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="V_1HUPMDP4IkT2V314-I-60" value="Storage&lt;div&gt;Fallback&lt;/div&gt;" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;rotation=0;" parent="1" vertex="1">
-          <mxGeometry x="970" y="277" width="60" height="30" as="geometry" />
+        <mxCell id="V_1HUPMDP4IkT2V314-I-60" value="Cache" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;rotation=0;" parent="1" vertex="1">
+          <mxGeometry x="970" y="285" width="60" height="30" as="geometry" />
         </mxCell>
         <mxCell id="V_1HUPMDP4IkT2V314-I-61" value="" style="endArrow=classic;html=1;rounded=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" target="V_1HUPMDP4IkT2V314-I-56" edge="1">
           <mxGeometry width="50" height="50" relative="1" as="geometry">
@@ -321,7 +321,7 @@
             <mxPoint x="1020" y="320" as="targetPoint" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="V_1HUPMDP4IkT2V314-I-65" value="Fallback&lt;div&gt;Replay&lt;/div&gt;" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;rotation=0;" parent="1" vertex="1">
+        <mxCell id="V_1HUPMDP4IkT2V314-I-65" value="Pull Cache" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;rotation=0;" parent="1" vertex="1">
           <mxGeometry x="970" y="320" width="60" height="30" as="geometry" />
         </mxCell>
         <mxCell id="V_1HUPMDP4IkT2V314-I-66" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.991;entryY=0.631;entryDx=0;entryDy=0;entryPerimeter=0;" parent="1" edge="1">
@@ -332,6 +332,9 @@
         </mxCell>
         <mxCell id="V_1HUPMDP4IkT2V314-I-67" value="Fallback&lt;div&gt;Replay&lt;/div&gt;" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;rotation=0;" parent="1" vertex="1">
           <mxGeometry x="970.81" y="410" width="60" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="SLJHlj_7JJSMH92uP7c2-1" value="Async" style="text;html=1;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;rotation=0;" vertex="1" parent="1">
+          <mxGeometry x="970" y="165" width="60" height="30" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>

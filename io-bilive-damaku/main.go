@@ -26,14 +26,15 @@ type envConfig struct {
 }
 
 var (
-	envCfg    = &envConfig{}
-	cfg       = &Config{}
-	mq        = &natsx.NatsHelper{}
-	db        = &dbx.GormHelper{}
-	rdb       = &dbx.RedisHelper{}
-	ctx       *CenterContext
-	worker    = &sync.WaitGroup{}
-	providers []RoomProvider
+	envCfg     = &envConfig{}
+	cfg        = NewConfig()
+	mq         = &natsx.NatsHelper{}
+	db         = &dbx.GormHelper{}
+	rdb        = &dbx.RedisHelper{}
+	ctx        *CenterContext
+	worker     = &sync.WaitGroup{}
+	providers  []RoomProvider
+	controller = &DamakuController{}
 )
 
 func init() {
@@ -57,6 +58,7 @@ func main() {
 	// build global context
 	ctx = &CenterContext{
 		Context:  context.Background(),
+		Config:   cfg,
 		Worker:   worker,
 		Registry: prometheus.NewRegistry(),
 		MQ:       mq,
@@ -65,6 +67,7 @@ func main() {
 	}
 	go echox.Run(&envCfg.EchoConfig, setupRoutes)
 	providerInit()
+	controller.Init(ctx)
 	klog.Info("fire...")
 	utils.Wait4CtrlC()
 }
