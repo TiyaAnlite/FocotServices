@@ -552,6 +552,7 @@ func (a *DamakuCenterAgent) metaIndexer() {
 			klog.Errorf("failed to marshal meta data: %s", err.Error())
 			return
 		}
+		klog.V(5).Infof("meta(%s) push: %s", syncSubject, cacheKey)
 		if msg, err := mq.Request(fmt.Sprintf("%s.agent.%s", cfg.SubjectPrefix, syncSubject), data, time.Second); err != nil {
 			klog.Errorf("publish user info meta message failed: %s", err.Error())
 			return
@@ -575,11 +576,12 @@ func (a *DamakuCenterAgent) metaIndexer() {
 		select {
 		case meta := <-a.userMetaChan:
 			// checking cache
-			cached, err := a.userMetaCache.Get(strconv.FormatUint(meta.UID, 10))
+			userKey := strconv.FormatUint(meta.UID, 10)
+			cached, err := a.userMetaCache.Get(userKey)
 			if err != nil {
 				if errors.Is(err, bigcache.ErrEntryNotFound) {
 					// no cache sync
-					syncMeta(a.userMetaCache, strconv.FormatUint(meta.UID, 10), "userInfoMeta", meta)
+					syncMeta(a.userMetaCache, userKey, "userInfoMeta", meta)
 					continue
 				}
 				klog.Errorf("failed to get cached user meta: %s", err.Error())
@@ -607,20 +609,25 @@ func (a *DamakuCenterAgent) metaIndexer() {
 				meta.WealthLevel = cachedMeta.WealthLevel
 			}
 			// update sync
-			syncMeta(a.userMetaCache, strconv.FormatUint(meta.UID, 10), "userInfoMeta", meta)
+			syncMeta(a.userMetaCache, userKey, "userInfoMeta", meta)
 		case meta := <-a.medalMetaChan:
-			cached, err := a.medalMetaCache.Get(strconv.FormatUint(meta.UID, 10))
+			if meta.RoomUID == 0 {
+				// not medal, skip
+				continue
+			}
+			medalKey := fmt.Sprintf("%d:%d", meta.UID, meta.RoomUID)
+			cached, err := a.medalMetaCache.Get(medalKey)
 			if err != nil {
 				if errors.Is(err, bigcache.ErrEntryNotFound) {
-					syncMeta(a.medalMetaCache, fmt.Sprintf("%d:%d", meta.UID, meta.RoomUID), "fansMedal", meta)
+					syncMeta(a.medalMetaCache, medalKey, "fansMedal", meta)
 					continue
 				}
-				klog.Errorf("failed to get cached user meta: %s", err.Error())
+				klog.Errorf("failed to get cached medal meta: %s", err.Error())
 				continue
 			}
 			var cachedMeta agent.FansMedalMeta
 			if err := proto.Unmarshal(cached, &cachedMeta); err != nil {
-				klog.Errorf("failed to unmarshal cached user meta: %s", err.Error())
+				klog.Errorf("failed to unmarshal cached medal meta: %s", err.Error())
 				continue
 			}
 			// FansMedalMeta is full update, not need to compare diff
@@ -631,7 +638,7 @@ func (a *DamakuCenterAgent) metaIndexer() {
 				meta.GuardLevel == cachedMeta.GuardLevel {
 				continue
 			}
-			syncMeta(a.medalMetaCache, strconv.FormatUint(meta.UID, 10), "fansMedal", meta)
+			syncMeta(a.medalMetaCache, medalKey, "fansMedal", meta)
 		case <-ctx.Done():
 			klog.Infof("meta indexer stopped")
 			worker.Done()
