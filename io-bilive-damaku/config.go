@@ -7,6 +7,7 @@ import (
 
 type Config struct {
 	Global struct {
+		Prefix  string            `json:"prefix" yaml:"prefix"`
 		BUVID   string            `json:"buvid" yaml:"BUVID"`
 		UID     uint64            `json:"uid" yaml:"UID"`
 		Cookie  string            `json:"cookie" yaml:"Cookie"`

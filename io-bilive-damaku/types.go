@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"github.com/TiyaAnlite/FocotServices/io-bilive-damaku/pb/agent"
 	"github.com/TiyaAnlite/FocotServicesCommon/dbx"
 	"github.com/TiyaAnlite/FocotServicesCommon/natsx"
 	"github.com/labstack/echo/v4"
 	"github.com/prometheus/client_golang/prometheus"
 	"sync"
+	"time"
 )
 
 type CenterContext struct {
@@ -36,3 +38,22 @@ type ProvidedRoom struct {
 	RoomID       uint64 `json:"room_id"`
 	// TODO: support custom UID/Cookie/UA/Headers etc.
 }
+
+type AgentStatus struct {
+	ID           string             `json:"id"`
+	Mask         uint16             `json:"mask"`
+	Condition    AgentCondition     `json:"condition"`
+	UpdateTime   time.Time          `json:"update_time"`
+	SyncedRooms  []uint64           `json:"synced_rooms"`
+	CachedStatus *agent.AgentStatus `json:"cached_status"`
+	HitStatus    map[string]uint32  `json:"hit_status"`
+	mu           sync.RWMutex
+}
+
+type AgentCondition uint32
+
+var (
+	AgentInitialization = AgentCondition(1 << 0)
+	AgentReady          = AgentCondition(1 << 1)
+	AgentSync           = AgentCondition(1 << 2)
+)

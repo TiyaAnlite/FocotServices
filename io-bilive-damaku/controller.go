@@ -19,16 +19,21 @@ type DamakuController struct {
 	storage        *StorageController
 	metrics        *MetricsService
 	centerCtx      *CenterContext
+	providers      []RoomProvider
 	msgChan        chan *nats.Msg
 	eventChan      chan any
-	dupCache       *bigcache.BigCache
+	dupCache       *bigcache.BigCache // [msgType]:[msgUniqueKey]
 	userMetaCache  *bigcache.BigCache // UserInfoMeta: uid
 	medalMetaCache *bigcache.BigCache // FansMedalMeta: user:rid
 }
 
-func (c *DamakuController) Init(ctx *CenterContext) {
+func (c *DamakuController) Init(ctx *CenterContext, providers []RoomProvider) {
 	var err error
+	c.agent = &AgentManager{}
+	c.storage = &StorageController{}
+	c.metrics = &MetricsService{}
 	c.centerCtx = ctx
+	c.providers = providers
 	c.msgChan = make(chan *nats.Msg, 100)
 	c.eventChan = make(chan any, 200)
 	c.dupCache, err = bigcache.New(ctx.Context, bigcache.Config{
@@ -47,6 +52,7 @@ func (c *DamakuController) Init(ctx *CenterContext) {
 		CleanWindow:      time.Hour,
 		MaxEntrySize:     500,
 		HardMaxCacheSize: 0,
+		Logger:           klog.NewStandardLogger("INFO"),
 	})
 	if err != nil {
 		klog.Fatalf("failed to init userMetaCache: %s", err.Error())
@@ -57,10 +63,22 @@ func (c *DamakuController) Init(ctx *CenterContext) {
 		CleanWindow:      time.Hour,
 		MaxEntrySize:     500,
 		HardMaxCacheSize: 0,
+		Logger:           klog.NewStandardLogger("INFO"),
 	})
 	if err != nil {
 		klog.Fatalf("failed to init medalMetaCache: %s", err.Error())
 	}
+	c.agent.Init(c.centerCtx)
+	chanProvide, chanRevoke := c.agent.GetRoomChan()
+	for _, provider := range providers {
+		provider.Provide(chanProvide)
+		provider.Revoke(chanRevoke)
+	}
+	sub, err := c.centerCtx.MQ.Nc.ChanSubscribe(fmt.Sprintf("%s.agent.*", c.centerCtx.Config.Global.Prefix), c.msgChan)
+	if err != nil {
+		klog.Fatalf("failed to subscribe msg: %s", err.Error())
+	}
+	c.centerCtx.MQ.AddSubscribe(sub)
 }
 
 // receive agent message and process duplicate, msg subject should be *.agent.*, can be parallelization
@@ -84,6 +102,7 @@ func (c *DamakuController) aggregateWindow() {
 		}
 		return nil
 	}
+	klog.Info("aggregate window start")
 	for {
 		select {
 		case msg := <-c.msgChan:
@@ -108,7 +127,8 @@ func (c *DamakuController) aggregateWindow() {
 			case "fansMedal":
 				meta := &agent.FansMedalMeta{}
 				if err := proto.Unmarshal(msg.Data, meta); err != nil {
-					klog.Fatalf("failed to unmarshal agent fans medal: %s", err.Error())
+					klog.Errorf("failed to unmarshal agent fans medal: %s", err.Error())
+					_ = agent.ControlError(msg, err)
 					continue
 				}
 				if meta.RoomUID == 0 {
@@ -123,13 +143,16 @@ func (c *DamakuController) aggregateWindow() {
 						continue
 					}
 					klog.Errorf("failed to get cached medal meta: %s", err.Error())
+					_ = agent.ControlError(msg, err)
 					continue
 				}
 				var cachedMeta agent.FansMedalMeta
 				if err := proto.Unmarshal(cached, &cachedMeta); err != nil {
 					klog.Errorf("failed to unmarshal cached medal meta: %s", err.Error())
+					_ = agent.ControlError(msg, err)
 					continue
 				}
+				_ = agent.ControlSuccess(msg)
 				// same as agent/agent.go:633
 				if meta.RoomUID == cachedMeta.RoomUID &&
 					meta.Name == cachedMeta.Name &&
@@ -143,6 +166,7 @@ func (c *DamakuController) aggregateWindow() {
 				meta := &agent.UserInfoMeta{}
 				if err := proto.Unmarshal(msg.Data, meta); err != nil {
 					klog.Fatalf("failed to unmarshal agent fans medal: %s", err.Error())
+					_ = agent.ControlError(msg, err)
 					continue
 				}
 				userKey := strconv.FormatUint(meta.UID, 10)
@@ -158,8 +182,10 @@ func (c *DamakuController) aggregateWindow() {
 				var cachedMeta agent.UserInfoMeta
 				if err := proto.Unmarshal(cached, &cachedMeta); err != nil {
 					klog.Errorf("failed to unmarshal cached user meta: %s", err.Error())
+					_ = agent.ControlError(msg, err)
 					continue
 				}
+				_ = agent.ControlSuccess(msg)
 				// same as agent/agent.go:595
 				if meta.UserName == cachedMeta.UserName &&
 					compare.Equal(meta.Face, cachedMeta.Face) &&
@@ -189,12 +215,12 @@ func (c *DamakuController) aggregateWindow() {
 				if mask == nil {
 					continue
 				}
-				// unique key: damaku roomID:uid:timestamp
 				if damaku.Meta.RoomID == nil {
 					klog.Warningf("damaku meta room uid is zero")
 					continue
 				}
-				key := fmt.Sprintf("%d:%d:%d", *damaku.Meta.RoomID, damaku.UID, damaku.Meta.TimeStamp)
+				// unique key: damaku roomID:uid:timestamp
+				key := fmt.Sprintf("%s:%d:%d:%d", "damaku", *damaku.Meta.RoomID, damaku.UID, damaku.Meta.TimeStamp)
 				if err := msgDupFilter("damaku", key, damaku, mask); err != nil {
 					continue
 				}
@@ -209,16 +235,64 @@ func (c *DamakuController) aggregateWindow() {
 					continue
 				}
 				// unique key: TID
-				key := strconv.FormatUint(gift.TID, 10)
+				key := fmt.Sprintf("%s:%d", "gift", gift.TID)
 				if err := msgDupFilter("gift", key, gift, mask); err != nil {
 					continue
 				}
 			case "guard":
+				guard := &agent.Guard{}
+				if err := proto.Unmarshal(msg.Data, guard); err != nil {
+					klog.Fatalf("failed to unmarshal guard: %s", err.Error())
+					continue
+				}
+				mask := c.agent.AgentMask(guard.Meta.Agent)
+				if mask == nil {
+					continue
+				}
+				// unique key: UID:timestamp
+				key := fmt.Sprintf("%s:%d:%d", "guard", guard.UID, guard.Meta.TimeStamp)
+				if err := msgDupFilter("guard", key, guard, mask); err != nil {
+					continue
+				}
 			case "superChat":
+				sc := &agent.SuperChat{}
+				if err := proto.Unmarshal(msg.Data, sc); err != nil {
+					klog.Fatalf("failed to unmarshal superChat: %s", err.Error())
+					continue
+				}
+				mask := c.agent.AgentMask(sc.Meta.Agent)
+				if mask == nil {
+					continue
+				}
+				// unique key: UID:timestamp
+				key := fmt.Sprintf("%s:%d:%d", "superChat", sc.UID, sc.Meta.TimeStamp)
+				if err := msgDupFilter("superChat", key, sc, mask); err != nil {
+					continue
+				}
+			// single stream only follow one agent at time, no duplicate check
 			case "online":
+				o := &agent.OnlineRankCount{}
+				if err := proto.Unmarshal(msg.Data, o); err != nil {
+					klog.Fatalf("failed to unmarshal online: %s", err.Error())
+					continue
+				}
+				if o.Meta.Agent != c.agent.MasterAgent() {
+					continue
+				}
+				c.eventChan <- o
 			case "onlineV2":
+				o := &agent.OnlineRankV2{}
+				if err := proto.Unmarshal(msg.Data, o); err != nil {
+					klog.Fatalf("failed to unmarshal online: %s", err.Error())
+					continue
+				}
+				if o.Meta.Agent != c.agent.MasterAgent() {
+					continue
+				}
+				c.eventChan <- o
 			}
 		case <-c.centerCtx.Context.Done():
+			klog.Infof("aggregate window stpooed")
 			return
 		}
 	}
@@ -226,5 +300,9 @@ func (c *DamakuController) aggregateWindow() {
 
 // pop cached msg info and push msg hit metrics
 func (c *DamakuController) dupCacheRelease(key string, entry []byte) {
-
+	m := strings.Split(key, ":")
+	if len(m) < 2 {
+		return
+	}
+	c.agent.AddAgentHitMask(entry, m[0])
 }

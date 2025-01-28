@@ -9,6 +9,7 @@ import (
 	"github.com/TiyaAnlite/FocotServices/io-bilive-damaku/pb/agent"
 	"github.com/allegro/bigcache/v3"
 	"github.com/bytedance/sonic"
+	"github.com/bytedance/sonic/decoder"
 	"github.com/duke-git/lancet/v2/compare"
 	"github.com/duke-git/lancet/v2/condition"
 	"github.com/duke-git/lancet/v2/pointer"
@@ -412,8 +413,12 @@ func (a *DamakuCenterAgent) eventHandler() {
 			case events.CmdSuperChatMessage:
 				var scData events.SuperChatMessage
 				if err := sonic.Unmarshal(msg.event.RawMessage, &scData); err != nil {
-					klog.Errorf("failed to unmarshal superchat data: %s", err.Error())
-					continue
+					// TODO: sc data bug: medal_info.medal_color is not a int64
+					var e *decoder.MismatchTypeError
+					if !errors.As(err, &e) {
+						klog.Errorf("failed to unmarshal superchat data: %s", err.Error())
+						continue
+					}
 				}
 				userMeta := &agent.UserInfoMeta{
 					UID:      uint64(scData.Data.Uid),

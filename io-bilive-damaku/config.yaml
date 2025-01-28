@@ -1,4 +1,5 @@
 global:
+  prefix: "dmCenter"
   buvid: ""
   uid: 0
   cookie: ""

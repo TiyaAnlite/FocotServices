@@ -67,7 +67,7 @@ func main() {
 	}
 	go echox.Run(&envCfg.EchoConfig, setupRoutes)
 	providerInit()
-	controller.Init(ctx)
+	controller.Init(ctx, providers)
 	klog.Info("fire...")
 	utils.Wait4CtrlC()
 }
