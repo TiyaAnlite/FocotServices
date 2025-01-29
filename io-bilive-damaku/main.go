@@ -67,7 +67,9 @@ func main() {
 	}
 	go echox.Run(&envCfg.EchoConfig, setupRoutes)
 	providerInit()
-	controller.Init(ctx, providers)
+	if err := controller.Init(ctx, providers); err != nil {
+		klog.Fatalf("failed to init controller: %s", err.Error())
+	}
 	klog.Info("fire...")
 	utils.Wait4CtrlC()
 }

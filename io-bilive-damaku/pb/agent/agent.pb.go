@@ -736,7 +736,7 @@ func (x *AgentStatus) GetMetaCache() map[int32]*AgentStatus_MetaCacheInfo {
 	return nil
 }
 
-// bind to request agent.fansMedal
+// bind to request stream.fansMedal
 type FansMedalMeta struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UID           uint64                 `protobuf:"varint,1,opt,name=UID,proto3" json:"UID,omitempty"`
@@ -821,7 +821,7 @@ func (x *FansMedalMeta) GetGuardLevel() GuardLevelType {
 	return GuardLevelType_NoGuard
 }
 
-// bind to request agent.userInfoMeta
+// bind to request stream.userInfo
 type UserInfoMeta struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	UID           uint64                 `protobuf:"varint,1,opt,name=UID,proto3" json:"UID,omitempty"`
@@ -974,7 +974,7 @@ func (x *BasicMsgMeta) GetTrace() map[int32]uint64 {
 	return nil
 }
 
-// bind to agent.damaku
+// bind to stream.damaku
 type Damaku struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Meta          *BasicMsgMeta          `protobuf:"bytes,1,opt,name=Meta,proto3" json:"Meta,omitempty"`
@@ -1043,7 +1043,7 @@ func (x *Damaku) GetMedal() uint64 {
 	return 0
 }
 
-// bind to agent.gift
+// bind to stream.gift
 type Gift struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Meta          *BasicMsgMeta          `protobuf:"bytes,1,opt,name=Meta,proto3" json:"Meta,omitempty"`
@@ -1136,7 +1136,7 @@ func (x *Gift) GetMedal() uint64 {
 	return 0
 }
 
-// bind to agent.guard
+// bind to stream.guard
 type Guard struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Meta          *BasicMsgMeta          `protobuf:"bytes,1,opt,name=Meta,proto3" json:"Meta,omitempty"`
@@ -1205,7 +1205,7 @@ func (x *Guard) GetGiftType() Guard_GuardGiftType {
 	return Guard_UnknownType
 }
 
-// bind to agent.superChat
+// bind to stream.superChat
 type SuperChat struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Meta          *BasicMsgMeta          `protobuf:"bytes,1,opt,name=Meta,proto3" json:"Meta,omitempty"`
@@ -1298,7 +1298,7 @@ func (x *SuperChat) GetMedal() uint64 {
 	return 0
 }
 
-// bind to agent.online
+// bind to stream.online
 type OnlineRankCount struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Meta          *BasicMsgMeta          `protobuf:"bytes,1,opt,name=Meta,proto3" json:"Meta,omitempty"`
@@ -1359,7 +1359,7 @@ func (x *OnlineRankCount) GetOnline() uint32 {
 	return 0
 }
 
-// bind to agent.onlineV2
+// bind to stream.onlineV2
 type OnlineRankV2 struct {
 	state         protoimpl.MessageState         `protogen:"open.v1"`
 	Meta          *BasicMsgMeta                  `protobuf:"bytes,1,opt,name=Meta,proto3" json:"Meta,omitempty"`

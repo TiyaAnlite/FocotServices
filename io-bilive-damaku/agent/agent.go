@@ -12,7 +12,6 @@ import (
 	"github.com/bytedance/sonic/decoder"
 	"github.com/duke-git/lancet/v2/compare"
 	"github.com/duke-git/lancet/v2/condition"
-	"github.com/duke-git/lancet/v2/pointer"
 	"github.com/nats-io/nats.go"
 	"github.com/tidwall/gjson"
 	"google.golang.org/protobuf/proto"
@@ -299,7 +298,7 @@ func (a *DamakuCenterAgent) eventHandler() {
 					klog.Errorf("failed to marshal danmaku: %s", err.Error())
 					continue
 				}
-				if err := mq.Publish(fmt.Sprintf("%s.agent.damaku", cfg.SubjectPrefix), sendData); err != nil {
+				if err := mq.Publish(fmt.Sprintf("%s.stream.damaku", cfg.SubjectPrefix), sendData); err != nil {
 					klog.Errorf("publish danmaku message failed: %s", err.Error())
 				}
 				klog.V(5).Infof("danmaku push")
@@ -374,7 +373,7 @@ func (a *DamakuCenterAgent) eventHandler() {
 					klog.Errorf("failed to marshal gift: %s", err.Error())
 					continue
 				}
-				if err := mq.Publish(fmt.Sprintf("%s.agent.gift", cfg.SubjectPrefix), sendData); err != nil {
+				if err := mq.Publish(fmt.Sprintf("%s.stream.gift", cfg.SubjectPrefix), sendData); err != nil {
 					klog.Errorf("publish gift message failed: %s", err.Error())
 				}
 				klog.V(5).Infof("gift push")
@@ -406,7 +405,7 @@ func (a *DamakuCenterAgent) eventHandler() {
 					klog.Errorf("failed to marshal guard: %s", err.Error())
 					continue
 				}
-				if err := mq.Publish(fmt.Sprintf("%s.agent.guard", cfg.SubjectPrefix), sendData); err != nil {
+				if err := mq.Publish(fmt.Sprintf("%s.stream.guard", cfg.SubjectPrefix), sendData); err != nil {
 					klog.Errorf("publish guard message failed: %s", err.Error())
 				}
 				klog.V(5).Infof("guard push")
@@ -460,7 +459,7 @@ func (a *DamakuCenterAgent) eventHandler() {
 					klog.Errorf("failed to marshal superChat: %s", err.Error())
 					continue
 				}
-				if err := mq.Publish(fmt.Sprintf("%s.agent.superChat", cfg.SubjectPrefix), sendData); err != nil {
+				if err := mq.Publish(fmt.Sprintf("%s.stream.superChat", cfg.SubjectPrefix), sendData); err != nil {
 					klog.Errorf("publish superChat message failed: %s", err.Error())
 				}
 				klog.V(5).Infof("superChat push")
@@ -485,7 +484,7 @@ func (a *DamakuCenterAgent) eventHandler() {
 					klog.Errorf("failed to marshal onlineRankCount: %s", err.Error())
 					continue
 				}
-				if err := mq.Publish(fmt.Sprintf("%s.agent.online", cfg.SubjectPrefix), sendData); err != nil {
+				if err := mq.Publish(fmt.Sprintf("%s.stream.online", cfg.SubjectPrefix), sendData); err != nil {
 					klog.Errorf("publish onlineRankCount message failed: %s", err.Error())
 				}
 				klog.V(5).Infof("onlineRankCount push")
@@ -530,7 +529,7 @@ func (a *DamakuCenterAgent) eventHandler() {
 					klog.Errorf("failed to marshal onlineRankV2: %s", err.Error())
 					continue
 				}
-				if err := mq.Publish(fmt.Sprintf("%s.agent.onlineV2", cfg.SubjectPrefix), sendData); err != nil {
+				if err := mq.Publish(fmt.Sprintf("%s.stream.onlineV2", cfg.SubjectPrefix), sendData); err != nil {
 					klog.Errorf("publish onlineRankV2 message failed: %s", err.Error())
 				}
 				klog.V(5).Infof("onlineRankV2 push")
@@ -551,26 +550,15 @@ func (a *DamakuCenterAgent) metaIndexer() {
 	worker.Add(1)
 	klog.Info("meta indexer started")
 	syncMeta := func(cache *bigcache.BigCache, cacheKey, syncSubject string, meta protoreflect.ProtoMessage) {
-		// update cache & sync
+		// update cache
 		data, err := proto.Marshal(meta)
 		if err != nil {
 			klog.Errorf("failed to marshal meta data: %s", err.Error())
 			return
 		}
 		klog.V(5).Infof("meta(%s) push: %s", syncSubject, cacheKey)
-		if msg, err := mq.Request(fmt.Sprintf("%s.agent.%s", cfg.SubjectPrefix, syncSubject), data, time.Second); err != nil {
-			klog.Errorf("publish user info meta message failed: %s", err.Error())
-			return
-		} else {
-			var resp agent.AgentControlResponse
-			if err := proto.Unmarshal(msg.Data, &resp); err != nil {
-				klog.Errorf("failed to unmarshal response data: %s", err.Error())
-				return
-			}
-			if resp.Status != agent.AgentControlResponse_OK {
-				klog.Errorf("sync meta error: %s, status: %d", pointer.UnwarpOrDefault(resp.Error), resp.Status)
-				return
-			}
+		if err := mq.Publish(fmt.Sprintf("%s.stream.%s", cfg.SubjectPrefix, syncSubject), data); err != nil {
+			klog.Errorf("publish %s meta message failed: %s", syncSubject, err.Error())
 		}
 		if err := cache.Set(cacheKey, data); err != nil {
 			klog.Errorf("failed to cache meta: %s", err.Error())
@@ -586,7 +574,7 @@ func (a *DamakuCenterAgent) metaIndexer() {
 			if err != nil {
 				if errors.Is(err, bigcache.ErrEntryNotFound) {
 					// no cache sync
-					syncMeta(a.userMetaCache, userKey, "userInfoMeta", meta)
+					syncMeta(a.userMetaCache, userKey, "userInfo", meta)
 					continue
 				}
 				klog.Errorf("failed to get cached user meta: %s", err.Error())

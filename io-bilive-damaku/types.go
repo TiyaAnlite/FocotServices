@@ -44,10 +44,16 @@ type AgentStatus struct {
 	Mask         uint16             `json:"mask"`
 	Condition    AgentCondition     `json:"condition"`
 	UpdateTime   time.Time          `json:"update_time"`
-	SyncedRooms  []uint64           `json:"synced_rooms"`
 	CachedStatus *agent.AgentStatus `json:"cached_status"`
 	HitStatus    map[string]uint32  `json:"hit_status"`
 	mu           sync.RWMutex
+}
+
+func (s *AgentStatus) IsReady() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r := s.Condition&AgentInitialization > 0 && s.Condition&AgentReady > 0
+	return r
 }
 
 type AgentCondition uint32
