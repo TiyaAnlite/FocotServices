@@ -7,6 +7,7 @@ import (
 	"github.com/TiyaAnlite/FocotServicesCommon/natsx"
 	"github.com/labstack/echo/v4"
 	"github.com/prometheus/client_golang/prometheus"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,10 +51,21 @@ type AgentStatus struct {
 }
 
 func (s *AgentStatus) IsReady() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	r := s.Condition&AgentInitialization > 0 && s.Condition&AgentReady > 0
-	return r
+	return s.Condition&AgentInitialization > 0 && s.Condition&AgentReady > 0
+}
+
+func (s *AgentStatus) StatusString() string {
+	status := make([]string, 0, 3)
+	if s.Condition&AgentInitialization > 0 {
+		status = append(status, "INITIALIZED")
+	}
+	if s.Condition&AgentReady > 0 {
+		status = append(status, "READY")
+	}
+	if s.Condition&AgentSync > 0 {
+		status = append(status, "SYNCED")
+	}
+	return strings.Join(status, "|")
 }
 
 type AgentCondition uint32

@@ -8,6 +8,7 @@ import (
 	"github.com/zoumo/goset"
 	"google.golang.org/protobuf/proto"
 	"k8s.io/klog/v2"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,7 @@ type AgentManager struct {
 	agentChan   chan *nats.Msg
 	roomProvide chan *ProvidedRoom
 	roomRevoke  chan uint64
-	watchedRoom goset.Set // thread safe
+	watchedRoom goset.Set // thread safe, uint64
 	latestMask  uint16
 	master      *AgentStatus
 	mu          sync.RWMutex
@@ -122,42 +123,14 @@ func (m *AgentManager) initAgent() {
 						UID:    m.centerCtx.Config.Global.UID,
 						Cookie: m.centerCtx.Config.Global.Cookie,
 					}
-					initData, err := proto.Marshal(initMsg)
-					if err != nil {
-						klog.Warningf("marshal init agent init failed: %s", err.Error())
-						return true
-					}
-					msg, err := m.centerCtx.MQ.Request(
-						fmt.Sprintf("%s.agent.%s.init", m.centerCtx.Config.Global.Prefix, a.ID),
-						initData,
-						time.Second*3,
-					)
-					if err != nil {
+					if err := m.control(initMsg, "init", a.ID); err != nil {
 						klog.Errorf("agent init failed: %s", err.Error())
-						return true
-					}
-					resp := &agent.AgentControlResponse{}
-					if err := proto.Unmarshal(msg.Data, resp); err != nil {
-						klog.Errorf("agent init failed: %s", err.Error())
-						return true
-					}
-					if resp.Status != agent.AgentControlResponse_OK {
-						klog.Errorf("agent init failed: %s", *resp.Error)
 						return true
 					}
 					a.mu.Lock()
 					a.Condition = a.Condition | AgentInitialization
 					a.UpdateTime = time.Now()
-					a.mu.Unlock()
-					return true
-				} else if a.Condition&AgentReady > 0 && time.Now().Sub(a.UpdateTime) > time.Second*3 {
-					// agent is no ready
-					a.mu.RUnlock()
-					a.mu.Lock()
-					// check again
-					if a.Condition&AgentReady > 0 && time.Now().Sub(a.UpdateTime) > time.Second*3 {
-						a.Condition = a.Condition ^ AgentReady
-					}
+					klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
 					a.mu.Unlock()
 					return true
 				}
@@ -179,6 +152,68 @@ func (m *AgentManager) syncAgent() {
 	for {
 		select {
 		case <-ticker.C:
+			m.managed.Range(func(_, value any) bool {
+				a := value.(*AgentStatus)
+				var needAdd []uint64
+				var needDel []uint64
+				a.mu.RLock()
+				m.watchedRoom.Range(func(_ int, elem interface{}) bool {
+					room := elem.(uint64)
+					if !slices.Contains(a.CachedStatus.Watching, room) {
+						needAdd = append(needAdd, room)
+					}
+					return true
+				})
+				for _, r := range a.CachedStatus.Watching {
+					if !m.watchedRoom.Contains(r) {
+						needDel = append(needDel, r)
+					}
+				}
+				if a.Condition&AgentSync > 0 && (len(needAdd) > 0 || len(needDel) > 0) {
+					// update condition first
+					a.mu.RUnlock()
+					a.mu.Lock()
+					a.Condition = ^AgentSync
+					a.UpdateTime = time.Now()
+					klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
+					a.mu.Unlock()
+				}
+				a.mu.RUnlock()
+				// sync diff rooms
+				for _, room := range needAdd {
+					action := &agent.AgentAction{
+						Type:   agent.AgentAction_AddRoom,
+						RoomID: &room,
+					}
+					if err := m.control(action, "action", a.ID); err != nil {
+						klog.Errorf("agent add failed: %s", err.Error())
+						continue
+					}
+				}
+				for _, room := range needDel {
+					action := &agent.AgentAction{
+						Type:   agent.AgentAction_DelRoom,
+						RoomID: &room,
+					}
+					if err := m.control(action, "action", a.ID); err != nil {
+						klog.Errorf("agent del failed: %s", err.Error())
+						continue
+					}
+				}
+				a.mu.Lock()
+				a.Condition = a.Condition | AgentSync
+				a.UpdateTime = time.Now()
+				klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
+				a.mu.Unlock()
+				// select a master
+				if m.master == nil || m.master.Condition&AgentReady == 0 {
+					m.mu.Lock()
+					m.master = a
+					klog.Infof("master agent changed to: %s", a.ID)
+					m.mu.Unlock()
+				}
+				return true
+			})
 		case <-m.centerCtx.Context.Done():
 			return
 		}
@@ -189,8 +224,30 @@ func (m *AgentManager) syncAgent() {
 func (m *AgentManager) agentStatus() {
 	m.centerCtx.Worker.Add(1)
 	defer m.centerCtx.Worker.Done()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 	for {
 		select {
+		case <-ticker.C:
+			m.managed.Range(func(_, value any) bool {
+				a := value.(*AgentStatus)
+				a.mu.RLock()
+				if a.Condition&AgentReady > 0 && time.Now().Sub(a.UpdateTime) > time.Second*3 {
+					// agent is no longer ready
+					a.mu.RUnlock()
+					a.mu.Lock()
+					// check again
+					if a.Condition&AgentReady > 0 && time.Now().Sub(a.UpdateTime) > time.Second*3 {
+						a.Condition = ^AgentReady // unset ready
+					}
+					a.UpdateTime = time.Now()
+					klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
+					a.mu.Unlock()
+					return true
+				}
+				a.mu.RUnlock()
+				return true
+			})
 		case msg := <-m.agentChan:
 			subject := strings.Split(msg.Subject, ".")
 			switch subject[len(subject)-1] {
@@ -202,6 +259,18 @@ func (m *AgentManager) agentStatus() {
 				}
 				v, ok := m.managed.Load(info.ID)
 				if !ok {
+					// create new agent
+					m.mu.Lock()
+					newAgent := &AgentStatus{
+						ID:         info.ID,
+						Mask:       m.latestMask,
+						UpdateTime: time.Now(),
+						HitStatus:  make(map[string]uint32),
+					}
+					m.latestMask++
+					m.mu.Unlock()
+					m.managed.Store(newAgent.ID, newAgent)
+					klog.Infof("new managered agent: %s", newAgent.ID)
 					return
 				}
 				a := v.(*AgentStatus)
@@ -211,6 +280,7 @@ func (m *AgentManager) agentStatus() {
 					a.Condition = ^AgentInitialization // unset initialization
 				}
 				a.UpdateTime = time.Now()
+				klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
 				a.mu.Unlock()
 			case "status":
 				status := &agent.AgentStatus{}
@@ -228,10 +298,33 @@ func (m *AgentManager) agentStatus() {
 				a.CachedStatus = status
 				a.Condition = a.Condition | AgentInitialization | AgentReady // set initialized & ready
 				a.UpdateTime = time.Now()
+				klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
 				a.mu.Unlock()
 			}
 		case <-m.centerCtx.Context.Done():
 			return
 		}
 	}
+}
+
+func (m *AgentManager) control(msg proto.Message, action, agentId string) error {
+	payload, err := proto.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal agent(%s) %s control failed: %s", agentId, action, err.Error())
+	}
+	resp, err := m.centerCtx.MQ.Request(
+		fmt.Sprintf("%s.agent.%s.%s", m.centerCtx.Config.Global.Prefix, agentId, action),
+		payload,
+		time.Second*3)
+	if err != nil {
+		return fmt.Errorf("agent(%s) %s control failed: %s", agentId, action, err.Error())
+	}
+	r := &agent.AgentControlResponse{}
+	if err := proto.Unmarshal(resp.Data, r); err != nil {
+		return fmt.Errorf("unmarshal agent(%s) %s control response failed: %s", agentId, action, err.Error())
+	}
+	if r.Status != agent.AgentControlResponse_OK {
+		return fmt.Errorf("agent(%s) %s control failed: %s", agentId, action, *r.Error)
+	}
+	return nil
 }
