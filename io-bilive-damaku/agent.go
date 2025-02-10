@@ -157,6 +157,11 @@ func (m *AgentManager) syncAgent() {
 				var needAdd []uint64
 				var needDel []uint64
 				a.mu.RLock()
+				// only sync ready agent
+				if !a.IsReady() {
+					a.mu.RUnlock()
+					return true
+				}
 				m.watchedRoom.Range(func(_ int, elem interface{}) bool {
 					room := elem.(uint64)
 					if !slices.Contains(a.CachedStatus.Watching, room) {
@@ -220,7 +225,7 @@ func (m *AgentManager) syncAgent() {
 	}
 }
 
-// receive agent msg
+// receive agent msg and update agent status by time
 func (m *AgentManager) agentStatus() {
 	m.centerCtx.Worker.Add(1)
 	defer m.centerCtx.Worker.Done()
@@ -259,6 +264,7 @@ func (m *AgentManager) agentStatus() {
 				}
 				v, ok := m.managed.Load(info.ID)
 				if !ok {
+					// auto register new agent
 					// create new agent
 					m.mu.Lock()
 					newAgent := &AgentStatus{
@@ -290,6 +296,7 @@ func (m *AgentManager) agentStatus() {
 				}
 				v, ok := m.managed.Load(status.Meta.Agent)
 				if !ok {
+					// no register agent will be ignored
 					return
 				}
 				a := v.(*AgentStatus)
