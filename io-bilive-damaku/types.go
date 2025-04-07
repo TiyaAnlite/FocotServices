@@ -65,7 +65,10 @@ func (s *AgentStatus) StatusString() string {
 	if s.Condition&AgentSync > 0 {
 		status = append(status, "SYNCED")
 	}
-	return strings.Join(status, "|")
+	if len(status) > 0 {
+		return strings.Join(status, "|")
+	}
+	return "NO INITIALIZED"
 }
 
 type AgentCondition uint32

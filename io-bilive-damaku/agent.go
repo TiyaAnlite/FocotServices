@@ -128,7 +128,7 @@ func (m *AgentManager) initAgent() {
 						return true
 					}
 					a.mu.Lock()
-					a.Condition = a.Condition | AgentInitialization
+					a.Condition |= AgentInitialization
 					a.UpdateTime = time.Now()
 					klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
 					a.mu.Unlock()
@@ -178,7 +178,7 @@ func (m *AgentManager) syncAgent() {
 					// update condition first
 					a.mu.RUnlock()
 					a.mu.Lock()
-					a.Condition = ^AgentSync
+					a.Condition ^= AgentSync
 					a.UpdateTime = time.Now()
 					klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
 					a.mu.Unlock()
@@ -206,7 +206,7 @@ func (m *AgentManager) syncAgent() {
 					}
 				}
 				a.mu.Lock()
-				a.Condition = a.Condition | AgentSync
+				a.Condition |= AgentSync
 				a.UpdateTime = time.Now()
 				klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
 				a.mu.Unlock()
@@ -282,9 +282,8 @@ func (m *AgentManager) agentStatus() {
 				a := v.(*AgentStatus)
 				// info: set agent to not initialized
 				a.mu.Lock()
-				if a.Condition&AgentInitialization > 0 {
-					a.Condition = ^AgentInitialization // unset initialization
-				}
+				// reset all condition for restarted agent
+				a.Condition = 0
 				a.UpdateTime = time.Now()
 				klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
 				a.mu.Unlock()
@@ -303,7 +302,7 @@ func (m *AgentManager) agentStatus() {
 				// status: set agent to ready
 				a.mu.Lock()
 				a.CachedStatus = status
-				a.Condition = a.Condition | AgentInitialization | AgentReady // set initialized & ready
+				a.Condition |= AgentInitialization | AgentReady // set initialized & ready
 				a.UpdateTime = time.Now()
 				klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
 				a.mu.Unlock()
