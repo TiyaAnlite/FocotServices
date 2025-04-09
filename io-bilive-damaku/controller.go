@@ -16,6 +16,7 @@ import (
 
 type DamakuController struct {
 	agent          *AgentManager
+	processor      *MessageProcessor
 	storage        *StorageController
 	metrics        *MetricsService
 	centerCtx      *CenterContext
@@ -30,6 +31,7 @@ type DamakuController struct {
 func (c *DamakuController) Init(ctx *CenterContext, providers []RoomProvider) error {
 	var err error
 	c.agent = &AgentManager{}
+	c.processor = &MessageProcessor{}
 	c.storage = &StorageController{}
 	c.metrics = &MetricsService{}
 	c.centerCtx = ctx
@@ -212,6 +214,7 @@ func (c *DamakuController) aggregateWindow() {
 				if err := msgDupFilter("damaku", key, damaku, mask); err != nil {
 					continue
 				}
+				// TODO: damaku
 			case "gift":
 				gift := &agent.Gift{}
 				if err := proto.Unmarshal(msg.Data, gift); err != nil {
@@ -227,6 +230,7 @@ func (c *DamakuController) aggregateWindow() {
 				if err := msgDupFilter("gift", key, gift, mask); err != nil {
 					continue
 				}
+				// TODO: gift
 			case "guard":
 				guard := &agent.Guard{}
 				if err := proto.Unmarshal(msg.Data, guard); err != nil {
@@ -242,6 +246,7 @@ func (c *DamakuController) aggregateWindow() {
 				if err := msgDupFilter("guard", key, guard, mask); err != nil {
 					continue
 				}
+				// TODO: guard
 			case "superChat":
 				sc := &agent.SuperChat{}
 				if err := proto.Unmarshal(msg.Data, sc); err != nil {
@@ -257,6 +262,7 @@ func (c *DamakuController) aggregateWindow() {
 				if err := msgDupFilter("superChat", key, sc, mask); err != nil {
 					continue
 				}
+				// TODO: superChat
 			// single stream only follow one agent at time, no duplicate check
 			case "online":
 				o := &agent.OnlineRankCount{}
