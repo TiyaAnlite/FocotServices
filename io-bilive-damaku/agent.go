@@ -156,44 +156,45 @@ func (m *AgentManager) syncAgent() {
 		select {
 		case <-ticker.C:
 			m.managed.Range(func(_, value any) bool {
-				a := value.(*AgentStatus)
+				status := value.(*AgentStatus)
 				var needAdd []uint64
 				var needDel []uint64
-				a.mu.RLock()
+				status.mu.RLock()
 				// only sync ready agent
-				if !a.IsReady() {
-					a.mu.RUnlock()
+				if !status.IsReady() {
+					status.mu.RUnlock()
 					return true
 				}
 				m.watchedRoom.Range(func(_ int, elem interface{}) bool {
 					room := elem.(uint64)
-					if !slices.Contains(a.CachedStatus.Watching, room) {
+					if !slices.Contains(status.CachedStatus.Watching, room) {
 						needAdd = append(needAdd, room)
 					}
 					return true
 				})
-				for _, r := range a.CachedStatus.Watching {
+				for _, r := range status.CachedStatus.Watching {
 					if !m.watchedRoom.Contains(r) {
 						needDel = append(needDel, r)
 					}
 				}
-				if a.Condition&AgentSync > 0 && (len(needAdd) > 0 || len(needDel) > 0) {
+				if status.Condition&AgentSync > 0 && (len(needAdd) > 0 || len(needDel) > 0) {
 					// update condition first
-					a.mu.RUnlock()
-					a.mu.Lock()
-					a.Condition ^= AgentSync
-					a.UpdateTime = time.Now()
-					klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
-					a.mu.Unlock()
+					status.mu.RUnlock()
+					status.mu.Lock()
+					status.Condition ^= AgentSync
+					status.UpdateTime = time.Now()
+					klog.Infof("agent(%s) condition changed to %s ", status.ID, status.StatusString())
+					status.mu.Unlock()
+				} else {
+					status.mu.RUnlock()
 				}
-				a.mu.RUnlock()
 				// sync diff rooms
 				for _, room := range needAdd {
 					action := &agent.AgentAction{
 						Type:   agent.AgentAction_AddRoom,
 						RoomID: &room,
 					}
-					if err := m.control(action, "action", a.ID); err != nil {
+					if err := m.control(action, "action", status.ID); err != nil {
 						klog.Errorf("agent add failed: %s", err.Error())
 						continue
 					}
@@ -203,23 +204,31 @@ func (m *AgentManager) syncAgent() {
 						Type:   agent.AgentAction_DelRoom,
 						RoomID: &room,
 					}
-					if err := m.control(action, "action", a.ID); err != nil {
+					if err := m.control(action, "action", status.ID); err != nil {
 						klog.Errorf("agent del failed: %s", err.Error())
 						continue
 					}
 				}
-				a.mu.Lock()
-				a.Condition |= AgentSync
-				a.UpdateTime = time.Now()
-				klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
-				a.mu.Unlock()
+				status.mu.Lock()
+				// update cached watching rooms
+				status.CachedStatus.Watching = slices.DeleteFunc(status.CachedStatus.Watching, func(u uint64) bool {
+					if slices.Contains(needDel, u) {
+						return true
+					}
+					return false
+				})
+				for _, room := range needAdd {
+					status.CachedStatus.Watching = append(status.CachedStatus.Watching, room)
+				}
+				status.Condition |= AgentSync
+				status.UpdateTime = time.Now()
+				klog.Infof("agent(%s) condition changed to %s ", status.ID, status.StatusString())
 				// select a master
 				if m.master == nil || m.master.Condition&AgentReady == 0 {
-					m.mu.Lock()
-					m.master = a
-					klog.Infof("master agent changed to: %s", a.ID)
-					m.mu.Unlock()
+					m.master = status
+					klog.Infof("master agent changed to: %s", status.ID)
 				}
+				m.mu.Unlock()
 				return true
 			})
 		case <-m.centerCtx.Context.Done():
@@ -238,22 +247,22 @@ func (m *AgentManager) agentStatus() {
 		select {
 		case <-ticker.C:
 			m.managed.Range(func(_, value any) bool {
-				a := value.(*AgentStatus)
-				a.mu.RLock()
-				if a.Condition&AgentReady > 0 && time.Now().Sub(a.UpdateTime) > time.Second*3 {
+				status := value.(*AgentStatus)
+				status.mu.RLock()
+				if status.IsReady() && time.Now().Sub(status.UpdateTime) > time.Second*3 {
 					// agent is no longer ready
-					a.mu.RUnlock()
-					a.mu.Lock()
+					status.mu.RUnlock()
+					status.mu.Lock()
 					// check again
-					if a.Condition&AgentReady > 0 && time.Now().Sub(a.UpdateTime) > time.Second*3 {
-						a.Condition = ^AgentReady // unset ready
+					if status.IsReady() && time.Now().Sub(status.UpdateTime) > time.Second*3 {
+						status.Condition = ^AgentReady // unset ready
 					}
-					a.UpdateTime = time.Now()
-					klog.Infof("agent(%s) condition changed to %s ", a.ID, a.StatusString())
-					a.mu.Unlock()
+					status.UpdateTime = time.Now()
+					klog.Infof("agent(%s) condition changed to %s ", status.ID, status.StatusString())
+					status.mu.Unlock()
 					return true
 				}
-				a.mu.RUnlock()
+				status.mu.RUnlock()
 				return true
 			})
 		case msg := <-m.agentChan:
