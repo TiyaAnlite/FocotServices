@@ -67,6 +67,9 @@ func (m *AgentManager) AddAgentHitMask(masks []byte, category string) {
 	}
 	m.managed.Range(func(_, value any) bool {
 		a := value.(*AgentStatus)
+		if !slices.Contains(hitAgent, a.Mask) {
+			return true
+		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		if _, ok := a.HitStatus[category]; ok {
