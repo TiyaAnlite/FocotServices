@@ -1,6 +1,7 @@
 syntax = "proto3";
 package pb;
 option go_package = "pb/agent";
+option optimize_for = SPEED;
 
 // normal response for request msg
 message AgentControlResponse {

@@ -2,16 +2,18 @@ package main
 
 import (
 	"context"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/TiyaAnlite/FocotServices/io-bilive-damaku/pb/agent"
 	"github.com/TiyaAnlite/FocotServicesCommon/dbx"
 	"github.com/TiyaAnlite/FocotServicesCommon/natsx"
 	"github.com/labstack/echo/v4"
 	"github.com/prometheus/client_golang/prometheus"
-	"strings"
-	"sync"
-	"time"
 )
 
+// CenterContext stored global context, config, concurrent information, web server, metrics and db for needed
 type CenterContext struct {
 	Context  context.Context
 	Config   *Config
@@ -23,14 +25,15 @@ type CenterContext struct {
 	RDB      *dbx.RedisHelper
 }
 
+// RoomProvider is a room management source for controller
 type RoomProvider interface {
-	// Init from provided context
+	// Init from the context that provided
 	Init(*CenterContext) error
 	// Provide a live room for watch,
-	// if room already added from other provider, will set provide flag for this provide
+	// if room already added from another provider, will set a provide flag for this provide
 	Provide(chan<- *ProvidedRoom)
-	// Revoke a provided room,
-	// will unset this provider flag, if all provider unset this room, room will stop watching
+	// Revoke a provided room.
+	// Will unset this provider flag, if all providers unset this room, room will stop watching
 	Revoke(chan<- uint64)
 }
 
@@ -73,7 +76,7 @@ func (s *AgentStatus) StatusString() string {
 
 type AgentCondition uint32
 
-var (
+const (
 	AgentInitialization = AgentCondition(1 << 0)
 	AgentReady          = AgentCondition(1 << 1)
 	AgentSync           = AgentCondition(1 << 2)

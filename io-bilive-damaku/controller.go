@@ -3,27 +3,29 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/TiyaAnlite/FocotServices/io-bilive-damaku/pb/agent"
 	"github.com/allegro/bigcache/v3"
 	"github.com/duke-git/lancet/v2/compare"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
 	"k8s.io/klog/v2"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
 )
 
 type DamakuController struct {
-	agent      *AgentManager
-	processor  *MessageProcessor
-	storage    *StorageController
-	metrics    *MetricsService
-	centerCtx  *CenterContext
-	providers  []RoomProvider
-	streamChan chan *nats.Msg
-	eventChan  chan any
+	agent       *AgentManager
+	processor   *MessageProcessor
+	storage     *StorageController
+	metrics     *MetricsService
+	centerCtx   *CenterContext
+	providers   []RoomProvider
+	streamChan  chan *nats.Msg
+	eventChan   chan any
+	recycleChan chan any
 
 	// cache
 	dupCache       *bigcache.BigCache // [msgType]:[msgUniqueKey]
@@ -51,6 +53,7 @@ func (c *DamakuController) Init(ctx *CenterContext, providers []RoomProvider) er
 	c.providers = providers
 	c.streamChan = make(chan *nats.Msg, 100)
 	c.eventChan = make(chan any, 200)
+	c.recycleChan = make(chan any, 200)
 
 	// cache init
 	c.dupCache, err = bigcache.New(ctx.Context, bigcache.Config{
@@ -112,11 +115,22 @@ func (c *DamakuController) Init(ctx *CenterContext, providers []RoomProvider) er
 	return nil
 }
 
+func (c *DamakuController) Start() {
+	klog.Infof("starting damaku controller")
+	c.centerCtx.Worker.Go(func() {
+		c.aggregateWindow(0)
+	})
+	c.centerCtx.Worker.Go(c.recycler)
+}
+
+// RecycleEvent recycle event that provided from eventChan
+func (c *DamakuController) RecycleEvent(event any) {
+	c.recycleChan <- event
+}
+
 // receive agent message and process duplicate, msg subject should be *.agent.*, can be parallelization
-func (c *DamakuController) aggregateWindow() {
-	c.centerCtx.Worker.Add(1)
-	defer c.centerCtx.Worker.Done()
-	klog.Info("aggregate window start")
+func (c *DamakuController) aggregateWindow(workerId int) {
+	klog.InfoS("aggregate window start", "workerId", workerId)
 	for {
 		select {
 		case msg := <-c.streamChan:
@@ -334,7 +348,41 @@ func (c *DamakuController) aggregateWindow() {
 				c.eventChan <- o
 			}
 		case <-c.centerCtx.Context.Done():
-			klog.Infof("aggregate window stpooed")
+			klog.InfoS("aggregate window stopped", "workerId", workerId)
+			return
+		}
+	}
+}
+
+// recycle event from recycleChan, no need to parallelization
+func (c *DamakuController) recycler() {
+	klog.Info("recycler start")
+	for {
+		select {
+		case msg := <-c.recycleChan:
+			// recycle event
+			switch msg.(type) {
+			case *agent.FansMedalMeta:
+				c.fansMedalPool.Put(msg)
+			case *agent.UserInfoMeta:
+				c.userInfoMetaPool.Put(msg)
+			case *agent.Damaku:
+				c.damakuPool.Put(msg)
+			case *agent.Gift:
+				c.giftPool.Put(msg)
+			case *agent.Guard:
+				c.guardPool.Put(msg)
+			case *agent.SuperChat:
+				c.superChatPool.Put(msg)
+			case *agent.OnlineRankCount:
+				c.onlinePool.Put(msg)
+			case *agent.OnlineRankV2:
+				c.onlineV2Pool.Put(msg)
+			default:
+				klog.Warningf("unknown event type that cannot be recycled: %T", msg)
+			}
+		case <-c.centerCtx.Context.Done():
+			klog.Info("recycler stopped")
 			return
 		}
 	}

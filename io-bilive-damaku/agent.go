@@ -3,15 +3,17 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/TiyaAnlite/FocotServices/io-bilive-damaku/pb/agent"
 	"github.com/nats-io/nats.go"
 	"github.com/zoumo/goset"
 	"google.golang.org/protobuf/proto"
 	"k8s.io/klog/v2"
-	"slices"
-	"strings"
-	"sync"
-	"time"
 )
 
 type AgentManager struct {
@@ -24,6 +26,9 @@ type AgentManager struct {
 	latestMask  uint16
 	master      *AgentStatus
 	mu          sync.RWMutex
+
+	// running flag
+	started atomic.Bool
 }
 
 func (m *AgentManager) Init(ctx *CenterContext) error {
@@ -37,12 +42,21 @@ func (m *AgentManager) Init(ctx *CenterContext) error {
 		return fmt.Errorf("failed to subscribe agent msg: %s", err.Error())
 	}
 	ctx.MQ.AddSubscribe(sub)
-	go m.manager()
 	return nil
 }
 
+// Start agent manager and redy for receiver agent msg
+func (m *AgentManager) Start() {
+	klog.Infof("starting agent manager")
+	if !m.started.CompareAndSwap(false, true) {
+		klog.Warningf("agent manager already started")
+		return
+	}
+	m.manager()
+}
+
 // AgentMask return unique agent binary mask using for cache or identifier
-// if agent not exist, will return nil
+// if agent not exists, will return nil
 func (m *AgentManager) AgentMask(agentId string) []byte {
 	if v, ok := m.managed.Load(agentId); ok {
 		a := v.(*AgentStatus)
@@ -98,20 +112,19 @@ func (m *AgentManager) GetRoomChan() (chan<- *ProvidedRoom, chan<- uint64) {
 }
 
 func (m *AgentManager) manager() {
-	m.centerCtx.Worker.Add(1)
-	defer m.centerCtx.Worker.Done()
-	klog.Info("agent manager started")
-	go m.initAgent()
-	go m.syncAgent()
-	go m.agentStatus()
+	// m.centerCtx.Worker.Add(1)
+	// defer m.centerCtx.Worker.Done()
+	// klog.Info("agent manager started")
+	m.centerCtx.Worker.Go(m.initAgent)
+	m.centerCtx.Worker.Go(m.syncAgent)
+	m.centerCtx.Worker.Go(m.agentStatus)
 }
 
 // init no initialization agent
 func (m *AgentManager) initAgent() {
-	m.centerCtx.Worker.Add(1)
-	defer m.centerCtx.Worker.Done()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	klog.Info("[Manager-init]handler start")
 	for {
 		select {
 		case <-ticker.C:
@@ -148,10 +161,9 @@ func (m *AgentManager) initAgent() {
 
 // sync need sync agent
 func (m *AgentManager) syncAgent() {
-	m.centerCtx.Worker.Add(1)
-	defer m.centerCtx.Worker.Done()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	klog.Info("[Manager-sync]handler start]")
 	for {
 		select {
 		case <-ticker.C:
@@ -160,11 +172,6 @@ func (m *AgentManager) syncAgent() {
 				var needAdd []uint64
 				var needDel []uint64
 				status.mu.RLock()
-				// only sync ready agent
-				if !status.IsReady() {
-					status.mu.RUnlock()
-					return true
-				}
 				m.watchedRoom.Range(func(_ int, elem interface{}) bool {
 					room := elem.(uint64)
 					if !slices.Contains(status.CachedStatus.Watching, room) {
@@ -177,16 +184,29 @@ func (m *AgentManager) syncAgent() {
 						needDel = append(needDel, r)
 					}
 				}
+				canSync := true
+				if !status.IsReady() {
+					canSync = false // only sync ready agent
+				}
 				if status.Condition&AgentSync > 0 && (len(needAdd) > 0 || len(needDel) > 0) {
 					// update condition first
 					status.mu.RUnlock()
 					status.mu.Lock()
 					status.Condition ^= AgentSync
-					status.UpdateTime = time.Now()
+					status.UpdateTime = time.Now() // if agent already no ready, that will be delay status sync for moment
 					klog.Infof("agent(%s) condition changed to %s ", status.ID, status.StatusString())
+					// check again
+					if !status.IsReady() {
+						canSync = false // only sync ready agent
+					} else {
+						canSync = true
+					}
 					status.mu.Unlock()
 				} else {
 					status.mu.RUnlock()
+				}
+				if !canSync {
+					return true
 				}
 				// sync diff rooms
 				for _, room := range needAdd {
@@ -239,10 +259,9 @@ func (m *AgentManager) syncAgent() {
 
 // receive agent msg and update agent status by time
 func (m *AgentManager) agentStatus() {
-	m.centerCtx.Worker.Add(1)
-	defer m.centerCtx.Worker.Done()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	klog.Info("[Manager-status]handler start]")
 	for {
 		select {
 		case <-ticker.C:
@@ -276,7 +295,7 @@ func (m *AgentManager) agentStatus() {
 				}
 				v, ok := m.managed.Load(info.ID)
 				if !ok {
-					// auto register new agent
+					// auto register a new agent
 					// create new agent
 					m.mu.Lock()
 					newAgent := &AgentStatus{
@@ -292,7 +311,7 @@ func (m *AgentManager) agentStatus() {
 					return
 				}
 				a := v.(*AgentStatus)
-				// info: set agent to not initialized
+				// info: set agent to not initialize
 				a.mu.Lock()
 				// reset all condition for restarted agent
 				a.Condition = 0
