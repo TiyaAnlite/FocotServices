@@ -3,6 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	biliChat "github.com/FishZe/go-bili-chat/v2"
 	biliChatClient "github.com/FishZe/go-bili-chat/v2/client"
 	"github.com/FishZe/go-bili-chat/v2/events"
@@ -17,10 +22,6 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"k8s.io/klog/v2"
-	"strconv"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 var (
@@ -436,7 +437,7 @@ func (a *DamakuCenterAgent) eventHandler() {
 					medal.Name = scData.Data.UInfo.Medal.Name
 					medal.Level = uint32(scData.Data.UInfo.Medal.Level)
 					medal.Light = condition.TernaryOperator(scData.Data.UInfo.Medal.IsLight, true, false)
-					medal.GuardLevel = agent.GuardLevelType(uLevel)
+					medal.GuardLevel = agent.GuardLevelType(uint32(scData.Data.UInfo.Medal.GuardLevel))
 				}
 				a.medalMetaChan <- medal
 
