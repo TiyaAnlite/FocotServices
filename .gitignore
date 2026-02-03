@@ -20,3 +20,5 @@
 .nextcloudsync.log
 .sync_*
 Desktop.ini
+
+bin/
