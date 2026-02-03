@@ -29,6 +29,7 @@ func (w *WashCommand) Command() *cli.Command {
 	return &cli.Command{
 		Name:            "wash",
 		Usage:           "washing BililiveRecorder raw xml damaku data to structured data",
+		Description:     "Reading blive files format: Blive-[roomid]-[date]-[time]-[ms]-[title].xml",
 		HideHelpCommand: true,
 		Flags: []cli.Flag{
 			&cli.StringFlag{
@@ -42,12 +43,6 @@ func (w *WashCommand) Command() *cli.Command {
 				Aliases: []string{"r"},
 				Usage:   "whether to include subdirectories",
 				Value:   false,
-			},
-			&cli.StringFlag{
-				Name:    "pattern",
-				Aliases: []string{"p"},
-				Usage:   "file name pattern to be processed",
-				Value:   "^Blive-\\d+-\\d+-\\d+-\\d+-\\S+.xml",
 			},
 			&cli.StringFlag{
 				Name:    "file",
@@ -71,15 +66,15 @@ func (w *WashCommand) action(c *cli.Context) error {
 	} else {
 		// adding files
 		klog.Infof("scanning dir: %s", c.String("dir"))
-		pattern := regexp.MustCompile(c.String("pattern"))
+		pattern := regexp.MustCompile("^Blive-\\d+-\\d+-\\d+-\\d+-[\\S ]+.xml")
 		if c.Bool("recursive") {
 			err := filepath.Walk(c.String("dir"), func(path string, info os.FileInfo, err error) error {
 				if err != nil {
 					return err
 				}
 				if !info.IsDir() && pattern.MatchString(info.Name()) {
-					if fileutil.IsExist(strings.TrimSuffix(path, filepath.Ext(path))+".json") ||
-						fileutil.IsExist(strings.TrimSuffix(path, filepath.Ext(path))+".json.gz") {
+					if fileutil.IsExist(w.outputFileName(path)+".json") ||
+						fileutil.IsExist(w.outputFileName(path)+".json.gz") {
 						return nil
 					}
 					fileList = append(fileList, path)
@@ -102,8 +97,8 @@ func (w *WashCommand) action(c *cli.Context) error {
 					continue
 				}
 				if pattern.MatchString(e.Name()) {
-					if fileutil.IsExist(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))+".json") ||
-						fileutil.IsExist(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))+".json.gz") {
+					if fileutil.IsExist(w.outputFileName(e.Name())+".json") ||
+						fileutil.IsExist(w.outputFileName(e.Name())+".json.gz") {
 						continue
 					}
 					fileList = append(fileList, filepath.Join(dir, e.Name()))
@@ -119,6 +114,12 @@ func (w *WashCommand) action(c *cli.Context) error {
 		w.washer(f, compress)
 	}
 	return nil
+}
+
+func (w *WashCommand) outputFileName(sourceNameWithExt string) string {
+	outFileName := strings.TrimSuffix(sourceNameWithExt, filepath.Ext(sourceNameWithExt))
+	nameSlice := strings.Split(outFileName, "-")
+	return strings.Join(nameSlice[:len(nameSlice)-1], "-")
 }
 
 func (w *WashCommand) washer(filename string, compress bool) {
@@ -158,14 +159,14 @@ func (w *WashCommand) washer(filename string, compress bool) {
 
 	var rw io.WriteCloser
 	if compress {
-		dstFp, err := os.Create(strings.TrimSuffix(filename, filepath.Ext(filename)) + ".json.gz")
+		dstFp, err := os.Create(w.outputFileName(filename) + ".json.gz")
 		if err != nil {
 			klog.Errorf("create file error: %s", err.Error())
 		}
 		defer dstFp.Close()
 		rw = gzip.NewWriter(dstFp)
 	} else {
-		rw, err = os.Create(strings.TrimSuffix(filename, filepath.Ext(filename)) + ".json")
+		rw, err = os.Create(w.outputFileName(filename) + ".json")
 		if err != nil {
 			klog.Errorf("create file error: %s", err.Error())
 		}
