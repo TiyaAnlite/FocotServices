@@ -102,6 +102,10 @@ func (w *WashCommand) action(c *cli.Context) error {
 					continue
 				}
 				if pattern.MatchString(e.Name()) {
+					if fileutil.IsExist(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))+".json") ||
+						fileutil.IsExist(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))+".json.gz") {
+						continue
+					}
 					fileList = append(fileList, filepath.Join(dir, e.Name()))
 				}
 			}
