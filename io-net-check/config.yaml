@@ -1,0 +1,5 @@
+interval: 10s
+dialTimeout: 3s
+maxConcurrency: 16
+targets:
+  - endpoint: "https://bilibili.com"

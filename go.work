@@ -1,4 +1,4 @@
-go 1.25
+go 1.25.6
 
 use (
 	./api-bff-layer
@@ -9,5 +9,6 @@ use (
 	./client-http-proxy
 	./io-bilive-damaku
 	./io-bilive-recorder
+	./io-net-check
 	./io-ys-vid-downloader
 )
